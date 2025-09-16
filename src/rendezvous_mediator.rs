@@ -339,6 +339,7 @@ impl RendezvousMediator {
     }
 
     pub async fn start_tcp(server: ServerPtr, host: String) -> ResultType<()> {
+        Config::set_option("api-server-real".to_string(), "".to_string());
         let host = check_port(&host, RENDEZVOUS_PORT);
         log::info!("start tcp: {}", hbb_common::websocket::check_ws(&host));
         let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
