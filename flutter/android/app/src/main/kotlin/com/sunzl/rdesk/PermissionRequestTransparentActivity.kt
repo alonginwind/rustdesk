@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.sunzl.rdesk
 
 import android.app.Activity
 import android.content.Intent
