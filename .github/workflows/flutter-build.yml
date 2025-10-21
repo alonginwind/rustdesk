@@ -283,6 +283,7 @@ jobs:
 
   # The fallback for the flutter version, we use Sciter for 32bit Windows.
   build-for-windows-sciter:
+    if: False
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
     # Temporarily disable this action due to additional test is needed.
@@ -433,7 +434,8 @@ jobs:
             ./SignOutput/rustdesk-*.exe
 
   build-rustdesk-ios:
-    if: ${{ inputs.upload-artifact }}
+    if: False
+#    if: ${{ inputs.upload-artifact }}
     name: build rustdesk ios ipa
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
@@ -553,6 +555,7 @@ jobs:
 
 
   build-for-macOS:
+    if: False
     name: ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
@@ -760,12 +763,13 @@ jobs:
             rustdesk*-${{ matrix.job.arch }}.dmg
 
   publish_unsigned:
+    if: False
     needs:
       - build-for-macOS
       - build-for-windows-flutter
       - build-for-windows-sciter
     runs-on: ubuntu-latest
-    if: ${{ inputs.upload-artifact }}
+#    if: ${{ inputs.upload-artifact }}
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@master
@@ -1537,33 +1541,33 @@ jobs:
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
             done
 
-            # rpm package
-            echo -e "start packaging fedora package"
-            pushd /workspace
-            case ${{ matrix.job.arch }} in
-              aarch64)
-                sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter.spec
-                ;;
-            esac
-            HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
-            pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
-            for name in rustdesk*??.rpm; do
-                mv "$name" /workspace/"${name%%.rpm}.rpm"
-            done
-
-            # rpm suse package
-            echo -e "start packaging suse package"
-            pushd /workspace
-            case ${{ matrix.job.arch }} in
-              aarch64)
-                sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter-suse.spec
-                ;;
-            esac
-            HBB=`pwd` rpmbuild ./res/rpm-flutter-suse.spec -bb
-            pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
-            for name in rustdesk*??.rpm; do
-                mv "$name" /workspace/"${name%%.rpm}-suse.rpm"
-            done
+#            # rpm package
+#            echo -e "start packaging fedora package"
+#            pushd /workspace
+#            case ${{ matrix.job.arch }} in
+#              aarch64)
+#                sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter.spec
+#                ;;
+#            esac
+#            HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
+#            pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
+#            for name in rustdesk*??.rpm; do
+#                mv "$name" /workspace/"${name%%.rpm}.rpm"
+#            done
+#
+#            # rpm suse package
+#            echo -e "start packaging suse package"
+#            pushd /workspace
+#            case ${{ matrix.job.arch }} in
+#              aarch64)
+#                sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter-suse.spec
+#                ;;
+#            esac
+#            HBB=`pwd` rpmbuild ./res/rpm-flutter-suse.spec -bb
+#            pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
+#            for name in rustdesk*??.rpm; do
+#                mv "$name" /workspace/"${name%%.rpm}-suse.rpm"
+#            done
 
       - name: Publish debian/rpm package
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -1573,7 +1577,7 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           files: |
             rustdesk-*.deb
-            rustdesk-*.rpm
+#            rustdesk-*.rpm
 
       - name: Upload deb
         uses: actions/upload-artifact@master
@@ -1586,7 +1590,8 @@ jobs:
       # old arch image does not make sense for arch since it is "arch" which always update to date
       # and failed to makepkg arm64 on x86_64
       - name: Patch archlinux PKGBUILD
-        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
+        if: False
+#        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         run: |
           sed -i "s/x86_64/${{ matrix.job.arch }}/g" res/PKGBUILD
           if [[ "${{ matrix.job.arch }}" == "aarch64" ]]; then
@@ -1594,7 +1599,8 @@ jobs:
           fi
 
       - name: Build archlinux package
-        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
+        if: False
+#        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         uses: rustdesk-org/arch-makepkg-action@master
         with:
           packages:
@@ -1602,7 +1608,8 @@ jobs:
             cd res && HBB=`pwd`/.. FLUTTER=1 makepkg -f
 
       - name: Publish archlinux package
-        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
+        if: False
+#        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@v1
         with:
           prerelease: true
@@ -1611,7 +1618,8 @@ jobs:
             res/rustdesk-${{ env.VERSION }}*.zst
 
   build-rustdesk-linux-sciter:
-    if: ${{ inputs.upload-artifact }}
+    if: False
+#    if: ${{ inputs.upload-artifact }}
     runs-on: ${{ matrix.job.on }}
     name: build-rustdesk-linux-sciter ${{ matrix.job.target }}
     strategy:
@@ -1837,10 +1845,11 @@ jobs:
           path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
 
   build-appimage:
+    if: False
     name: Build appimage ${{ matrix.job.target }}
     needs: [build-rustdesk-linux]
     runs-on: ubuntu-22.04
-    if: ${{ inputs.upload-artifact }}
+#    if: ${{ inputs.upload-artifact }}
     strategy:
       fail-fast: false
       matrix:
@@ -1887,12 +1896,13 @@ jobs:
             ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
 
   build-flatpak:
+    if: False
     name: Build flatpak ${{ matrix.job.target }}${{ matrix.job.suffix }}
     needs:
       - build-rustdesk-linux
       - build-rustdesk-linux-sciter
     runs-on: ${{ matrix.job.on }}
-    if: ${{ inputs.upload-artifact }}
+#    if: ${{ inputs.upload-artifact }}
     strategy:
       fail-fast: false
       matrix:
