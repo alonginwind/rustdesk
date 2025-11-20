@@ -14,8 +14,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const NAME: &'static str = "display";
 
+// Disable dummy display auto-creation on Windows.
+// Auto-created virtual displays steal focus from the real screen.
+// Virtual displays can still be enabled manually when needed.
 #[cfg(windows)]
-const DUMMY_DISPLAY_SIDE_MAX_SIZE: usize = 1024;
+const DUMMY_DISPLAY_SIDE_MAX_SIZE: usize = 0;
 
 struct ChangedResolution {
     original: (i32, i32),
