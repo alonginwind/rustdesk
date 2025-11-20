@@ -106,19 +106,75 @@ pub(super) fn verified_update_artifact_from_release_page_url(
 ) -> ResultType<VerifiedUpdateArtifact> {
     let release_id = release_id_from_update_url(update_url)?;
     let display_version = display_version_from_release_id(&release_id)?;
-    let expected_artifact_url_prefix =
-        format!("https://github.com/rustdesk/rustdesk/releases/download/{release_id}/");
-    let metadata_url = format!("{expected_artifact_url_prefix}rustdesk-update.json");
-    let signature_url = format!("{metadata_url}.sig");
-    let metadata_bytes = fetch_update_sidecar_bytes(&metadata_url)?;
-    let signature_bytes = fetch_update_sidecar_bytes(&signature_url)?;
-    let requirements = UpdateMetadataRequirements {
-        expected_version: display_version.as_str(),
-        expected_release_id: release_id.as_str(),
-        expected_artifact_url_prefix: expected_artifact_url_prefix.as_str(),
-        artifact: *query,
-    };
-    crate::update_metadata::verify_update_metadata(&metadata_bytes, &signature_bytes, requirements)
+    if update_url.contains("github.com") {
+        let expected_artifact_url_prefix =
+            format!("https://github.com/rustdesk/rustdesk/releases/download/{release_id}/");
+        let metadata_url = format!("{expected_artifact_url_prefix}rustdesk-update.json");
+        let signature_url = format!("{metadata_url}.sig");
+        let metadata_bytes = fetch_update_sidecar_bytes(&metadata_url)?;
+        let signature_bytes = fetch_update_sidecar_bytes(&signature_url)?;
+        let requirements = UpdateMetadataRequirements {
+            expected_version: display_version.as_str(),
+            expected_release_id: release_id.as_str(),
+            expected_artifact_url_prefix: expected_artifact_url_prefix.as_str(),
+            artifact: *query,
+        };
+        crate::update_metadata::verify_update_metadata(&metadata_bytes, &signature_bytes, requirements)
+    } else {
+        // Custom server: fetch size and sha256 from server
+        let ext = query.format;
+        let arch = query.arch;
+        let filename = if cfg!(feature = "flutter") {
+            format!("rustdesk-{}-{}.{}", display_version, arch, ext)
+        } else {
+            format!("rustdesk-{}-{}-sciter.{}", display_version, arch, ext)
+        };
+        let download_url = format!("{}/{}", update_url, filename);
+        let client = create_http_client_with_url_strict(&download_url)?;
+
+        // HEAD request to get file size
+        let head_resp = client.head(&download_url).send()?;
+        if !head_resp.status().is_success() {
+            bail!("HEAD request failed for {}: {}", download_url, head_resp.status());
+        }
+        let size = head_resp
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        if size == 0 {
+            bail!("Server did not return Content-Length for {}", download_url);
+        }
+
+        // Fetch SHA256 from sidecar file
+        let sha256_url = format!("{}.sha256", download_url);
+        let sha256 = match client.get(&sha256_url).send() {
+            Ok(resp) if resp.status().is_success() => {
+                let mut body = String::new();
+                resp.take(256).read_to_string(&mut body)?;
+                body.split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            }
+            _ => {
+                bail!("Failed to fetch SHA256 from {}", sha256_url);
+            }
+        };
+        if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+            bail!("Invalid SHA256 from {}", sha256_url);
+        }
+
+        Ok(VerifiedUpdateArtifact {
+            version: display_version,
+            url: download_url,
+            #[cfg(target_os = "macos")]
+            file_name: filename,
+            size,
+            sha256,
+        })
+    }
 }
 
 fn fetch_update_sidecar_bytes(url: &str) -> ResultType<Vec<u8>> {
@@ -156,39 +212,56 @@ fn read_limited_response_bytes<R: Read>(
 
 pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(url).ok()?;
-    // Check the raw prefix before Url normalizes default ports.
-    if !url.starts_with("https://github.com/")
-        || parsed.scheme() != "https"
-        || parsed.host_str() != Some("github.com")
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.port().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
-        return None;
+    if url.contains("github.com") {
+        // Check the raw prefix before Url normalizes default ports.
+        if !url.starts_with("https://github.com/")
+            || parsed.scheme() != "https"
+            || parsed.host_str() != Some("github.com")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.port().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return None;
+        }
+
+        let mut segments = parsed.path_segments()?;
+        let owner = segments.next()?;
+        let repo = segments.next()?;
+        let releases = segments.next()?;
+        let download = segments.next()?;
+        let tag = segments.next()?;
+        let filename = segments.next()?;
+
+        if owner != "rustdesk"
+            || repo != "rustdesk"
+            || releases != "releases"
+            || download != "download"
+            || tag.is_empty()
+            || segments.next().is_some()
+            || !is_plain_update_filename(filename)
+        {
+            return None;
+        }
+
+        Some(std::env::temp_dir().join(filename))
+    } else {
+        // Custom server: accept any HTTPS URL with a valid plain filename
+        let mut segments = parsed.path_segments()?;
+        let repo = segments.next()?;
+        let tag = segments.next()?;
+        let filename = segments.next()?;
+        if repo != "rustdesk"
+            || tag.is_empty()
+            || segments.next().is_some()
+            || !is_plain_update_filename(filename)
+        {
+            return None;
+        }
+
+        Some(std::env::temp_dir().join(filename))
     }
-
-    let mut segments = parsed.path_segments()?;
-    let owner = segments.next()?;
-    let repo = segments.next()?;
-    let releases = segments.next()?;
-    let download = segments.next()?;
-    let tag = segments.next()?;
-    let filename = segments.next()?;
-
-    if owner != "rustdesk"
-        || repo != "rustdesk"
-        || releases != "releases"
-        || download != "download"
-        || tag.is_empty()
-        || segments.next().is_some()
-        || !is_plain_update_filename(filename)
-    {
-        return None;
-    }
-
-    Some(std::env::temp_dir().join(filename))
 }
 
 fn is_plain_update_filename(filename: &str) -> bool {
