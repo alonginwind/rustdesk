@@ -2591,11 +2591,6 @@ impl LoginConfigHandler {
                     .insert("other-server-key".to_owned(), c.clone());
             }
         }
-        if self.force_relay {
-            config
-                .options
-                .insert("force-always-relay".to_owned(), "Y".to_owned());
-        }
         #[cfg(feature = "flutter")]
         {
             // sync connected password to personal ab automatically if it is not shared password
