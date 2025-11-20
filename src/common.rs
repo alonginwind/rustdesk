@@ -1118,13 +1118,14 @@ pub fn get_api_server(api: String, custom: String) -> String {
     res
 }
 
-fn get_api_server_(api: String, custom: String) -> String {
+fn get_api_server_(_api: String, custom: String) -> String {
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         if !lic.api.is_empty() {
             return lic.api.clone();
         }
     }
+    let api = Config::get_api_server();
     if !api.is_empty() {
         return api.to_owned();
     }
