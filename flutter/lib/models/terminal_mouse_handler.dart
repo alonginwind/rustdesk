@@ -50,6 +50,7 @@ class TerminalMouseInteraction extends StatefulWidget {
     this.backgroundOpacity = 1,
     this.padding,
     this.onSecondaryTapDown,
+    this.textStyle,
   });
 
   final Terminal terminal;
@@ -58,6 +59,7 @@ class TerminalMouseInteraction extends StatefulWidget {
   final double backgroundOpacity;
   final EdgeInsets? padding;
   final void Function(TapDownDetails, CellOffset)? onSecondaryTapDown;
+  final TerminalStyle? textStyle;
 
   @override
   State<TerminalMouseInteraction> createState() =>
@@ -292,6 +294,7 @@ class _TerminalMouseInteractionState extends State<TerminalMouseInteraction> {
         focusNode: widget.focusNode,
         backgroundOpacity: widget.backgroundOpacity,
         padding: widget.padding,
+        textStyle: widget.textStyle ?? const TerminalStyle(),
         shortcuts: platformTerminalShortcuts(),
         onKeyEvent: terminalCopyHandler(widget.terminal, widget.controller),
         onSecondaryTapDown: widget.onSecondaryTapDown,
