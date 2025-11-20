@@ -5,6 +5,7 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/terminal_model.dart';
+import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:xterm/xterm.dart';
 import 'terminal_connection_manager.dart';
 
@@ -185,6 +186,14 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    String fontSize_ = bind.mainGetOptionSync(key: 'terminal-fontsize');
+    String fontFamily_ = bind.mainGetOptionSync(key: 'terminal-font');
+    if (fontSize_.isEmpty) {
+      fontSize_ = '18';
+    }
+    if (fontFamily_.isEmpty) {
+      fontFamily_ = 'monospace';
+    }
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: LayoutBuilder(
@@ -196,6 +205,10 @@ class _TerminalPageState extends State<TerminalPage>
             focusNode: _terminalFocusNode,
             // Note: autofocus is not used here because focus is managed manually
             // via _onTabStateChanged() to handle tab switching properly.
+            textStyle: TerminalStyle(
+              fontSize: double.parse(fontSize_),
+              fontFamily: fontFamily_,
+            ),
             backgroundOpacity: 0.7,
             padding: _calculatePadding(heightPx),
             onSecondaryTapDown: (details, offset) async {
