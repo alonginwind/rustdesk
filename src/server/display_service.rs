@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const NAME: &'static str = "display";
 
 #[cfg(windows)]
-const DUMMY_DISPLAY_SIDE_MAX_SIZE: usize = 1024;
+const DUMMY_DISPLAY_SIDE_MAX_SIZE: usize = 0;
 
 struct ChangedResolution {
     original: (i32, i32),
