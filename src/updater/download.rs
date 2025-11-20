@@ -3,9 +3,14 @@ use hbb_common::{bail, log, ResultType};
 use std::{
     io::{Read, Seek, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 const UPDATE_FILE_CREATE_ATTEMPTS: usize = 16;
+
+/// The client defaults to a 30s total request timeout, which cuts off
+/// full installer downloads on slow links.
+const UPDATE_FILE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60 * 60 * 24);
 
 pub(super) fn ensure_verified_update_artifact(
     download_url: &str,
@@ -33,7 +38,10 @@ pub(super) fn ensure_verified_update_artifact(
         }
     }
     let client = create_http_client_with_url_strict(download_url)?;
-    let response = client.get(download_url).send()?;
+    let response = client
+        .get(download_url)
+        .timeout(UPDATE_FILE_DOWNLOAD_TIMEOUT)
+        .send()?;
     if !response.status().is_success() {
         bail!(
             "Failed to download the new version file: {}",
