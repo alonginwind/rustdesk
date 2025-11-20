@@ -3388,6 +3388,7 @@ dependencies = [
  "protobuf-codegen",
  "rand 0.8.5",
  "regex",
+ "reqwest",
  "rustls-native-certs",
  "rustls-pki-types",
  "rustls-platform-verifier",
