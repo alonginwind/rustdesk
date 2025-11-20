@@ -354,38 +354,47 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf) {
 
 pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(url).ok()?;
-    // Check the raw prefix before Url normalizes default ports.
-    if !url.starts_with("https://github.com/")
-        || parsed.scheme() != "https"
-        || parsed.host_str() != Some("github.com")
+    if parsed.scheme() != "https"
         || !parsed.username().is_empty()
         || parsed.password().is_some()
-        || parsed.port().is_some()
         || parsed.query().is_some()
         || parsed.fragment().is_some()
     {
         return None;
     }
 
-    let mut segments = parsed.path_segments()?;
-    let owner = segments.next()?;
-    let repo = segments.next()?;
-    let releases = segments.next()?;
-    let download = segments.next()?;
-    let tag = segments.next()?;
-    let filename = segments.next()?;
-
-    if owner != "rustdesk"
-        || repo != "rustdesk"
-        || releases != "releases"
-        || download != "download"
-        || tag.is_empty()
-        || segments.next().is_some()
-        || !is_plain_update_filename(filename)
+    // GitHub official releases
+    if url.starts_with("https://github.com/")
+        && parsed.host_str() == Some("github.com")
+        && parsed.port().is_none()
     {
-        return None;
+        let mut segments = parsed.path_segments()?;
+        let owner = segments.next()?;
+        let repo = segments.next()?;
+        let releases = segments.next()?;
+        let download = segments.next()?;
+        let tag = segments.next()?;
+        let filename = segments.next()?;
+
+        if owner != "rustdesk"
+            || repo != "rustdesk"
+            || releases != "releases"
+            || download != "download"
+            || tag.is_empty()
+            || segments.next().is_some()
+            || !is_plain_update_filename(filename)
+        {
+            return None;
+        }
+
+        return Some(std::env::temp_dir().join(filename));
     }
 
+    // Custom server: accept any HTTPS URL with a valid plain filename
+    let filename = parsed.path_segments()?.next_back()?;
+    if !is_plain_update_filename(filename) {
+        return None;
+    }
     Some(std::env::temp_dir().join(filename))
 }
 
@@ -672,16 +681,39 @@ mod tests {
     }
 
     #[test]
+    fn update_download_file_accepts_custom_server_urls() {
+        for (url, expected_name) in [
+            (
+                "https://example.com/rustdesk.exe",
+                Some("rustdesk.exe"),
+            ),
+            (
+                "https://rustdesk.frp.alonginwind.top:8443/rustdesk/1.4.9/rustdesk-1.4.9-x86_64.exe",
+                Some("rustdesk-1.4.9-x86_64.exe"),
+            ),
+            (
+                "https://my-server.com/releases/rustdesk-1.4.9-x86_64.dmg",
+                Some("rustdesk-1.4.9-x86_64.dmg"),
+            ),
+        ] {
+            let file = get_download_file_from_url(url).expect(&format!("should accept: {url}"));
+            assert_eq!(
+                file.file_name().and_then(|name| name.to_str()),
+                expected_name,
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
     fn update_download_file_rejects_untrusted_or_malformed_urls() {
         for url in [
             "http://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://example.com/rustdesk.exe",
             "https://github.com/other/project/releases/download/1/rustdesk.exe",
             "https://github.com/rustdesk/rustdesk/releases/download/1/",
             "https://github.com/rustdesk/rustdesk/releases/download/1/nested/rustdesk.exe",
             "https://github.com/rustdesk/rustdesk/releases/download/1/C:rustdesk.exe",
             "https://user@github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com:443/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
             "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe?download=1",
             "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe#download",
             "not a url",
