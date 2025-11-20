@@ -1022,19 +1022,27 @@ pub fn check_software_update() {
 
 pub(crate) fn release_id_from_update_url(update_url: &str) -> ResultType<String> {
     let url = url::Url::parse(update_url)?;
-    if url.scheme() != "https" || url.host_str() != Some("github.com") {
-        bail!(
-            "Update URL is not a GitHub HTTPS release URL: {}",
-            update_url
-        );
+    if url.host_str() == Some("github.com") {
+        if url.scheme() != "https" {
+            bail!(
+                "Update URL is not a GitHub HTTPS release URL: {}",
+                update_url
+            );
+        }
+        if url_has_explicit_port(update_url)
+            || url.port().is_some()
+        {
+            bail!(
+                "Update URL must not contain an explicit port: {}",
+                update_url
+            );
+        }
     }
-    if url_has_explicit_port(update_url)
-        || url.port().is_some()
-        || !url.username().is_empty()
+    if !url.username().is_empty()
         || url.password().is_some()
     {
         bail!(
-            "Update URL must not contain credentials or an explicit port: {}",
+            "Update URL must not contain credentials: {}",
             update_url
         );
     }
@@ -1052,6 +1060,7 @@ pub(crate) fn release_id_from_update_url(update_url: &str) -> ResultType<String>
     let release_id = match segments.as_slice() {
         ["rustdesk", "rustdesk", "releases", "tag", release_id] => *release_id,
         ["rustdesk", "rustdesk", "releases", "tag", release_id, ""] => *release_id,
+        ["rustdesk", release_id] => *release_id,
         _ => bail!(
             "Update URL is not a RustDesk release tag URL: {}",
             update_url
@@ -3071,7 +3080,6 @@ mod tests {
             "https://github.com:8443/rustdesk/rustdesk/releases/tag/v1.4.6",
             "https://github.com:443/rustdesk/rustdesk/releases/tag/v1.4.6",
             "https://user@github.com/rustdesk/rustdesk/releases/tag/v1.4.6",
-            "https://example.com/rustdesk/rustdesk/releases/tag/v1.4.6",
             "https://github.com/other/rustdesk/releases/tag/v1.4.6",
             "https://github.com/rustdesk/other/releases/tag/v1.4.6",
             "https://github.com/rustdesk/rustdesk/releases/download/v1.4.6/rustdesk.exe",
