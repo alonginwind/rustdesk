@@ -545,7 +545,7 @@ impl Drop for CheckTestNatType {
     }
 }
 
-pub fn test_nat_type() {
+pub fn test_nat_type() -> std::thread::JoinHandle<()> {
     test_ipv6_sync();
     use std::sync::atomic::{AtomicBool, Ordering};
     std::thread::spawn(move || {
@@ -584,7 +584,7 @@ pub fn test_nat_type() {
         }
 
         IS_RUNNING.store(false, Ordering::SeqCst);
-    });
+    })
 }
 
 #[tokio::main(flavor = "current_thread")]

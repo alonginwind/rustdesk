@@ -202,9 +202,10 @@ impl Client {
         (i32, String),
     )> {
         debug_assert!(peer == interface.get_id());
+        let handle_nat = crate::test_nat_type();
         interface.update_direct(None);
         interface.update_received(false);
-        match Self::_start(peer, key, token, conn_type, interface.clone()).await {
+        match Self::_start(peer, key, token, conn_type, interface.clone(), handle_nat).await {
             Err(err) => {
                 let err_str = err.to_string();
                 if err_str.starts_with("Failed") {
@@ -236,6 +237,7 @@ impl Client {
         token: &str,
         conn_type: ConnType,
         interface: impl Interface,
+        handle_nat: std::thread::JoinHandle<()>,
     ) -> ResultType<(
         (
             Stream,
@@ -338,6 +340,7 @@ impl Client {
             rendezvous_server.clone(),
             servers.clone(),
             contained,
+            Some(handle_nat),
         );
         if udp.0.is_none() {
             return fut.await;
@@ -355,6 +358,7 @@ impl Client {
             rendezvous_server,
             servers,
             contained,
+            None,
         );
         connect_futures.push(fut.boxed());
         match select_ok(connect_futures).await {
@@ -374,6 +378,7 @@ impl Client {
         mut rendezvous_server: String,
         servers: Vec<String>,
         contained: bool,
+        handle_nat_option: Option<std::thread::JoinHandle<()>>,
     ) -> ResultType<(
         (
             Stream,
@@ -411,7 +416,13 @@ impl Client {
         let mut relay_server = "".to_owned();
         let mut peer_addr = Config::get_any_listen_addr(true);
         let mut peer_nat_type = NatType::UNKNOWN_NAT;
-        let my_nat_type = crate::get_nat_type(100).await;
+        let mut my_nat_type = crate::get_nat_type(100).await;
+        if my_nat_type != NatType::ASYMMETRIC as i32 {
+            if let Some(handle_nat) = handle_nat_option {
+                handle_nat.join().unwrap();
+            }
+            my_nat_type = crate::get_nat_type(100).await;
+        }
         let mut is_local = false;
         let mut feedback = 0;
         use hbb_common::protobuf::Enum;
