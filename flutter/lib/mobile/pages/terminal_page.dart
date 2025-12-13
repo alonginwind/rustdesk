@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
@@ -8,7 +10,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:xterm/xterm.dart';
 import '../../desktop/pages/terminal_connection_manager.dart';
 import '../../consts.dart';
-import 'dart:async';
 
 class TerminalPage extends StatefulWidget {
   const TerminalPage({
@@ -31,14 +32,14 @@ class TerminalPage extends StatefulWidget {
 }
 
 class _TerminalPageState extends State<TerminalPage>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   late FFI _ffi;
   late TerminalModel _terminalModel;
+  double? _cellHeight;
+  double _sysKeyboardHeight = 0;
+  Timer? _keyboardDebounce;
   final GlobalKey _keyboardKey = GlobalKey();
   double _keyboardHeight = 0;
-  double _sysKeyboardHeight = 0;
-  double? _cellHeight;
-  Timer? _keyboardDebounce;
   late bool _showTerminalControlButton;
 
   // For web only.
@@ -52,6 +53,7 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     debugPrint(
         '[TerminalPage] Initializing terminal ${widget.terminalId} for peer ${widget.id}');
@@ -74,11 +76,10 @@ class _TerminalPageState extends State<TerminalPage>
       _cellHeight = ph * 1.0;
     };
 
-    _showTerminalControlButton = mainGetLocalBoolOptionSync(kOptionAllowShowTerminalControlButton);
-
     // Register this terminal model with FFI for event routing
     _ffi.registerTerminalModel(widget.terminalId, _terminalModel);
 
+    _showTerminalControlButton = mainGetLocalBoolOptionSync(kOptionAllowShowTerminalControlButton);
     // Initialize terminal connection
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ffi.dialogManager
@@ -96,8 +97,23 @@ class _TerminalPageState extends State<TerminalPage>
     // Unregister terminal model from FFI
     _ffi.unregisterTerminalModel(widget.terminalId);
     _terminalModel.dispose();
+    _keyboardDebounce?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
     TerminalConnectionManager.releaseConnection(widget.id);
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+
+    _keyboardDebounce?.cancel();
+    _keyboardDebounce = Timer(const Duration(milliseconds: 20), () {
+      final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+      setState(() {
+        _sysKeyboardHeight = bottomInset;
+      });
+    });
   }
 
   void _updateKeyboardHeight() {
@@ -111,11 +127,11 @@ class _TerminalPageState extends State<TerminalPage>
     if (_cellHeight == null) {
       return const EdgeInsets.symmetric(horizontal: 5.0, vertical: 2.0);
     }
-    final realHeight = heightPx - _keyboardHeight - _sysKeyboardHeight;
+    final realHeight = heightPx - _sysKeyboardHeight - _keyboardHeight;
     final rows = (realHeight / _cellHeight!).floor();
     final extraSpace = realHeight - rows * _cellHeight!;
-    final topBottom = extraSpace / 2.0;
-    return EdgeInsets.only(left: 5.0, right: 5.0, top: topBottom, bottom: topBottom + _keyboardHeight + _sysKeyboardHeight);
+    final topBottom = max(0.0, extraSpace / 2.0);
+    return EdgeInsets.only(left: 5.0, right: 5.0, top: topBottom, bottom: topBottom + _sysKeyboardHeight + _keyboardHeight);
   }
 
   @override
@@ -132,7 +148,7 @@ class _TerminalPageState extends State<TerminalPage>
 
   Widget buildBody() {
     return Scaffold(
-      resizeToAvoidBottomInset: false,
+      resizeToAvoidBottomInset: false, // Disable automatic layout adjustment; manually control UI updates to prevent flickering when the keyboard shows/hides
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
@@ -175,20 +191,11 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   Widget _buildFloatingKeyboard() {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     return AnimatedPositioned(
-      duration: Duration.zero,
-      onEnd: () {
-        _keyboardDebounce?.cancel();
-        _keyboardDebounce = Timer(const Duration(milliseconds: 100), () { // Fix flickering when the system keyboard shows and hides
-          setState(() {
-            _sysKeyboardHeight = bottomInset;
-          });
-        });
-      },
+      duration: Duration(milliseconds: 200),
       left: 0,
       right: 0,
-      bottom: bottomInset,
+      bottom: _sysKeyboardHeight,
       child: Container(
         key: _keyboardKey,
         color: Theme.of(context).scaffoldBackgroundColor,
