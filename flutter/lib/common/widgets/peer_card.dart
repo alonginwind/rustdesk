@@ -1055,6 +1055,23 @@ abstract class BasePeerCard extends StatelessWidget {
   }
 
   @protected
+  MenuEntryBase<String> _sharePeer(Peer peer) {
+    return MenuEntryButton<String>(
+      childBuilder: (TextStyle? style) => Text(
+        "分享Peer",
+        style: style,
+      ),
+      proc: () {
+        () async {
+          sharePeerDialog(peer);
+        }();
+      },
+      padding: menuPadding,
+      dismissOnClicked: true,
+    );
+  }
+
+  @protected
   Future<String> _getAlias(String id) async =>
       await bind.mainGetPeerOption(id: id, key: 'alias');
 
@@ -1228,6 +1245,7 @@ class AddressBookPeerCard extends BasePeerCard {
     menuItems.add(_existIn());
     if (gFFI.abModel.current.canWrite()) {
       menuItems.add(MenuEntryDivider());
+      menuItems.add(_sharePeer(peer));
       menuItems.add(_removeAction(peer.id));
     }
     return menuItems;
