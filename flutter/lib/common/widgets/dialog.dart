@@ -2494,6 +2494,144 @@ void addPeersToAbDialog(
   });
 }
 
+void sharePeerDialog(
+  Peer peer,
+) async {
+  Future<String?> sharePeerApiCall(Peer peer, String password) async {
+    debugPrint('Sharing peer ${peer.id} with password: $password');
+    try {
+      final apiServer = await bind.mainGetApiServer();
+      if (apiServer.isEmpty) {
+        debugPrint('API server is empty, cannot share peer');
+        return null;
+      }
+
+      final access_token = bind.mainGetLocalOption(key: 'access_token');
+      var headers = getHttpHeaders();
+      headers['Content-Type'] = "application/json";
+      headers['api-token'] = access_token;
+
+      final body = jsonEncode({
+        'id': peer.id,
+        'password_type': 'once',
+        'password': password,
+        'expire': 1800,
+      });
+
+      final url = '$apiServer/api/admin/address_book/shareByWebClient';
+      final response = await http.post(
+        Uri.parse(url),
+        headers: headers,
+        body: body,
+      );
+
+      if (response.statusCode == 200) {
+        final respJson = jsonDecode(response.body);
+        if (respJson['code'] == 0) {
+          final shareToken = respJson['data']['share_token'];
+          debugPrint('Successfully generated share token: $shareToken');
+          final shareUrl = '$apiServer/webclient/#/?share_token=$shareToken';
+          return shareUrl;
+        } else {
+          debugPrint(
+              'Failed to share peer. Code: ${respJson["code"]}, Message: ${respJson["message"]}');
+          return null;
+        }
+      } else {
+        debugPrint(
+            'HTTP request failed. Status: ${response.statusCode}, Body: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Error sharing peer: $e');
+      return null;
+    }
+  }
+
+  RxBool isInProgress = false.obs;
+  TextEditingController controller = TextEditingController();
+  RxString shareUrl = "".obs; // 存储API返回的字符串
+
+  gFFI.dialogManager.show((setState, close, context) {
+    // 点击按钮的处理函数
+    actionButton() async {
+      if (shareUrl.value.isEmpty) {
+        // 第一次点击 → 生成
+        final password = controller.text.trim();
+        if (password.isEmpty) {
+          BotToast.showText(text: "请输入被控端密码", contentColor: Colors.red);
+          return;
+        }
+
+        isInProgress.value = true;
+        final url = await sharePeerApiCall(peer, password);
+        if (url != null) {
+          shareUrl.value = url; // 更新显示
+        } else {
+          BotToast.showText(text: "生成失败", contentColor: Colors.red);
+        }
+        isInProgress.value = false;
+      } else {
+        // 第二次点击 → 复制
+        await Clipboard.setData(ClipboardData(text: shareUrl.value));
+        BotToast.showText(text: "已复制到剪切板");
+      }
+    }
+
+    cancel() {
+      close();
+    }
+
+    return CustomAlertDialog(
+      title: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.copy, color: MyTheme.accent),
+          const SizedBox(width: 10),
+          Text("分享Peer"),
+        ],
+      ),
+      content: Obx(() => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 输入框仅在未生成前显示
+              if (shareUrl.value.isEmpty)
+                TextField(
+                  controller: controller,
+                  decoration: InputDecoration(
+                    labelText: "请输入被控端密码",
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              const SizedBox(height: 10),
+              // 显示生成结果
+              if (shareUrl.value.isNotEmpty)
+                SelectableText(
+                  shareUrl.value,
+                  textAlign: TextAlign.center,
+                ),
+              isInProgress.value ? const LinearProgressIndicator() : Offstage(),
+            ],
+          )),
+      actions: [
+        Obx(() => dialogButton(
+              shareUrl.value.isEmpty ? "生成" : "复制",
+              icon: Icon(shareUrl.value.isEmpty ? Icons.send : Icons.copy),
+              onPressed: actionButton,
+            )),
+        dialogButton(
+          "关闭",
+          icon: Icon(Icons.close_rounded),
+          onPressed: cancel,
+          isOutline: true,
+        ),
+      ],
+      onSubmit: actionButton,
+      onCancel: cancel,
+    );
+  });
+}
+
 void setSharedAbPasswordDialog(String abName, Peer peer) {
   TextEditingController controller = TextEditingController(text: '');
   RxBool isInProgress = false.obs;
