@@ -114,9 +114,9 @@ fn get_default_shell() -> String {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // First try the SHELL environment variable
+        // First try the SHELL environment variable, which may be set to a non-/bin/sh value
         if let Ok(shell) = std::env::var("SHELL") {
-            if !shell.is_empty() {
+            if !shell.is_empty() && shell != "/bin/sh" {
                 return shell;
             }
         }
