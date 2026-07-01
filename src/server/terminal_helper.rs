@@ -1029,8 +1029,8 @@ pub fn run_terminal_helper(args: &[String]) -> Result<()> {
     exiting.store(true, Ordering::SeqCst);
 
     // Wait for threads
-    let _ = input_thread.join();
-    let _ = output_thread.join();
+    //let _ = input_thread.join();
+    //let _ = output_thread.join();
 
     // pty_master will be dropped here, releasing PTY resources
     drop(pty_master);
