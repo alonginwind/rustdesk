@@ -129,7 +129,7 @@ pub const SCRAP_OTHER_VERSION_OR_X11_REQUIRED: &str =
 pub const SCRAP_XDP_PORTAL_UNAVAILABLE: &str =
     "xdp-portal-unavailable";
 pub const SCRAP_X11_REQUIRED: &str = "x11 expected";
-pub const SCRAP_X11_REF_URL: &str = "https://rustdesk.com/docs/en/manual/linux/#x11-required";
+pub const SCRAP_X11_REF_URL: &str = "https://remotesq.com/docs/en/manual/linux/#x11-required";
 
 #[cfg(not(target_os = "linux"))]
 pub const AUDIO_BUFFER_MS: usize = 3000;
@@ -3329,7 +3329,7 @@ lazy_static::lazy_static! {
             msgtype: "error",
             title: "Login Error",
             text: "Login screen using Wayland is not supported",
-            link: "https://rustdesk.com/docs/en/manual/linux/#login-screen",
+            link: "https://remotesq.com/docs/en/manual/linux/#login-screen",
             try_again: true,
         }), (LOGIN_MSG_DESKTOP_SESSION_NOT_READY, LoginErrorMsgBox{
             msgtype: "session-login",

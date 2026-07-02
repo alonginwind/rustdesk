@@ -437,7 +437,7 @@ class LoginWidgetUserPass extends StatelessWidget {
                         style: TextStyle(fontSize: 16),
                       ),
                       onPressed:
-                          curOP.value.isEmpty || curOP.value == 'rustdesk'
+                          curOP.value.isEmpty || curOP.value == 'remotesq'
                               ? () {
                                   onLogin();
                                 }
@@ -553,7 +553,7 @@ Future<bool?> loginDialog() async {
         setState(() => passwordMsg = translate('Password missed'));
         return;
       }
-      curOP.value = 'rustdesk';
+      curOP.value = 'remotesq';
       setState(() => isInProgress = true);
       try {
         final resp = await gFFI.userModel.login(LoginRequest(

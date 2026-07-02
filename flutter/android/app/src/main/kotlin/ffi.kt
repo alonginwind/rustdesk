@@ -5,11 +5,11 @@ package ffi
 import android.content.Context
 import java.nio.ByteBuffer
 
-import com.sunzl.rdesk.RdClipboardManager
+import com.qdsq.remote.RdClipboardManager
 
 object FFI {
     init {
-        System.loadLibrary("rustdesk")
+        System.loadLibrary("remotesq")
     }
 
     external fun init(ctx: Context)

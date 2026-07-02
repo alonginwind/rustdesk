@@ -52,7 +52,7 @@ class HomePageState extends State<HomePage> {
         appBarActions: [],
       ));
     }
-    if (isAndroid && !bind.isOutgoingOnly()) {
+    if (!isAndroid && isAndroid && !bind.isOutgoingOnly()) {
       _chatPageTabIndex = _pages.length;
       _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
     }
@@ -188,7 +188,7 @@ class WebHomePage extends StatelessWidget {
           return;
         }
         list.removeAt(0);
-        fakelink = "rustdesk://${list.join(s)}";
+        fakelink = "remotesq://${list.join(s)}";
         break;
       }
     }

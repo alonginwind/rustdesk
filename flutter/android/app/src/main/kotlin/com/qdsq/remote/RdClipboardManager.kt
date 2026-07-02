@@ -1,4 +1,4 @@
-package com.sunzl.rdesk
+package com.qdsq.remote
 
 import java.nio.ByteBuffer
 import java.util.Timer

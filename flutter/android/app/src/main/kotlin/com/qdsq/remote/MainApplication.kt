@@ -1,4 +1,4 @@
-package com.sunzl.rdesk
+package com.qdsq.remote
 
 import android.app.Application
 import android.util.Log

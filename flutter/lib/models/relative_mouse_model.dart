@@ -61,7 +61,7 @@ class RelativeMouseModel {
     if (_hostChannelInitialized) return;
     _hostChannelInitialized = true;
 
-    _hostChannel = const MethodChannel('org.rustdesk.rustdesk/host');
+    _hostChannel = const MethodChannel('org.remotesq.remotesq/host');
     _hostChannel!.setMethodCallHandler((call) async {
       if (call.method == 'onMouseDelta') {
         final args = call.arguments as Map<dynamic, dynamic>;

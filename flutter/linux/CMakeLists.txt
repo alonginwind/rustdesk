@@ -191,7 +191,7 @@ message(STATUS "rustdesk lib build type: ${RUSTDESK_LIB_BUILD_TYPE}")
 
 set(RUSTDESK_LIB "../../target/${RUSTDESK_LIB_BUILD_TYPE}/liblibrustdesk.so")
 install(FILES "${RUSTDESK_LIB}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-COMPONENT Runtime RENAME librustdesk.so)
+COMPONENT Runtime RENAME libremotesq.so)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

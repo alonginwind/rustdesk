@@ -1007,7 +1007,7 @@ pub fn get_app_name() -> String {
 
 #[inline]
 pub fn is_rustdesk() -> bool {
-    hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
+    hbb_common::config::APP_NAME.read().unwrap().eq("RemoteSQ")
 }
 
 #[inline]
@@ -1069,7 +1069,7 @@ fn get_api_server_(_api: String, _custom: String) -> String {
 #[inline]
 pub fn is_public(url: &str) -> bool {
     let url = url.to_ascii_lowercase();
-    url.contains("rustdesk.com/") || url.ends_with("rustdesk.com")
+    url.contains("remotesq.com/") || url.ends_with("remotesq.com")
 }
 
 pub fn get_udp_punch_enabled() -> bool {
@@ -2264,7 +2264,7 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    get_app_name() != "RustDesk"
+    get_app_name() != "RemoteSQ"
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {

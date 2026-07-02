@@ -97,7 +97,7 @@ impl ParsedPeerInfo {
     fn is_support_virtual_display(&self) -> bool {
         self.is_installed
             && self.platform == "Windows"
-            && (self.idd_impl == "rustdesk_idd" || self.idd_impl == "amyuni_idd")
+            && (self.idd_impl == "remotesq_idd" || self.idd_impl == "amyuni_idd")
     }
 }
 
@@ -1265,7 +1265,7 @@ impl<T: InvokeUiSession> Remote<T> {
             self.handler.msgbox(
                 "error",
                 "Download new version",
-                "upgrade_remote_rustdesk_client_to_{1.3.9}_tip",
+                "upgrade_remote_remotesq_client_to_{1.3.9}_tip",
                 "",
             );
         } else {

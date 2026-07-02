@@ -699,7 +699,7 @@ fn set_x11_env(desktop: &Desktop) {
 fn stop_rustdesk_servers() {
     let _ = run_cmds(&format!(
         r##"ps -ef | grep -E '{} +--server' | awk '{{print $2}}' | xargs -r kill -9"##,
-        crate::get_app_name().to_lowercase(),
+        "rustdesk",
     ));
 }
 
@@ -707,11 +707,11 @@ fn stop_rustdesk_servers() {
 fn stop_subprocess() {
     let _ = run_cmds(&format!(
         r##"ps -ef | grep '/etc/{}/xorg.conf' | grep -v grep | awk '{{print $2}}' | xargs -r kill -9"##,
-        crate::get_app_name().to_lowercase(),
+        "rustdesk",
     ));
     let _ = run_cmds(&format!(
         r##"ps -ef | grep -E '{} +--cm-no-ui' | grep -v grep | awk '{{print $2}}' | xargs -r kill -9"##,
-        crate::get_app_name().to_lowercase(),
+        "rustdesk",
     ));
 }
 
@@ -1684,7 +1684,7 @@ mod desktop {
         }
 
         fn get_display_xauth_xwayland(&mut self) {
-            let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
+            let tray = format!("{} +--tray", "rustdesk");
             for _ in 1..=10 {
                 let display_proc = vec![
                     XDG_DESKTOP_PORTAL,
@@ -1794,7 +1794,7 @@ mod desktop {
 
         fn get_xauth_x11(&mut self) {
             // try by direct access to window manager process by name
-            let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
+            let tray = format!("{} +--tray", "rustdesk");
             for _ in 1..=10 {
                 let display_proc = vec![
                     XWAYLAND,
@@ -1893,7 +1893,7 @@ mod desktop {
             self.is_rustdesk_subprocess = false;
             let cmd = format!(
                 "ps -ef | grep '{}/xorg.conf' | grep -v grep | wc -l",
-                crate::get_app_name().to_lowercase()
+                "rustdesk"
             );
             if let Ok(res) = run_cmds(&cmd) {
                 if res.trim() != "0" {
@@ -2039,8 +2039,8 @@ fn switch_service(stop: bool) -> String {
         .unwrap_or_default();
     Config::set_option("stop-service".into(), if stop { "Y" } else { "" }.into());
     if !home.is_empty() && home != "/root" && !Config::get().is_empty() {
-        let app_name_lower = crate::get_app_name().to_lowercase();
-        let app_name0 = crate::get_app_name();
+        let app_name_lower = "rustdesk";
+        let app_name0 = "RustDesk";
         let config_subdir = format!(".config/{}", app_name_lower);
 
         // SECURITY: Quote all paths to prevent shell injection from paths containing
@@ -2062,7 +2062,7 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     }
     log::info!("Uninstalling service...");
     let cp = switch_service(true);
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = "rustdesk";
     // systemctl kill rustdesk --tray, execute cp first
     if !run_cmds_privileged(&format!(
         "{cp} systemctl disable {app_name}; systemctl stop {app_name};"
@@ -2084,7 +2084,7 @@ pub fn install_service() -> bool {
     }
     log::info!("Installing service...");
     let cp = switch_service(false);
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = "rustdesk";
     if !run_cmds_privileged(&format!(
         "{cp} systemctl enable {app_name}; systemctl start {app_name};"
     )) {
@@ -2095,7 +2095,7 @@ pub fn install_service() -> bool {
 
 fn check_if_stop_service() {
     if Config::get_option("stop-service".into()) == "Y" {
-        let app_name = crate::get_app_name().to_lowercase();
+        let app_name = "rustdesk";
         allow_err!(run_cmds(&format!(
             "systemctl disable {app_name}; systemctl stop {app_name}"
         )));
@@ -2112,7 +2112,7 @@ pub fn check_autostart_config() -> ResultType<()> {
             return Ok(());
         }
     };
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = "rustdesk";
     let path = format!("{home}/.config/autostart");
     let file = format!("{path}/{app_name}.desktop");
     // https://github.com/rustdesk/rustdesk/issues/4863
@@ -2219,12 +2219,12 @@ fn get_shortcuts_inhibitor_app_id() -> String {
         match std::env::var("FLATPAK_ID") {
             Ok(id) if !id.is_empty() => format!("{}.desktop", id),
             _ => {
-                let app_name = crate::get_app_name();
+                let app_name = "RustDesk";
                 format!("com.{}.{}.desktop", app_name.to_lowercase(), app_name)
             }
         }
     } else {
-        format!("{}.desktop", crate::get_app_name().to_lowercase())
+        format!("{}.desktop", "rustdesk")
     }
 }
 
