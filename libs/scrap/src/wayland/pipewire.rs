@@ -991,6 +991,9 @@ pub(crate) fn is_server_running() -> bool {
         return v == 1;
     }
 
+    #[cfg(not(any(target_os = "android")))]
+    let app_name = config::APP_NAME_REAL.read().unwrap().clone().to_lowercase();
+    #[cfg(any(target_os = "android"))]
     let app_name = config::APP_NAME.read().unwrap().clone().to_lowercase();
     let output = match Command::new(CMD_SH.as_str())
         .arg("-c")

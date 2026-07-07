@@ -1025,7 +1025,7 @@ impl DesktopManager {
     ) -> ResultType<Child> {
         let xorg = Self::get_xorg();
         log::info!("Use xorg: {}", &xorg);
-        let app_name = crate::get_app_name().to_lowercase();
+        let app_name = crate::get_app_name_real().to_lowercase();
         let conf = format!("/etc/{app_name}/xorg.conf");
         match Command::new(xorg)
             .envs(envs)
@@ -1059,7 +1059,7 @@ impl DesktopManager {
         gid: u32,
         envs: &HashMap<&str, String>,
     ) -> ResultType<Child> {
-        let app_name = crate::get_app_name().to_lowercase();
+        let app_name = crate::get_app_name_real().to_lowercase();
         match Command::new(&format!("/etc/{app_name}/startwm.sh"))
             .envs(envs)
             .uid(uid)
@@ -1088,7 +1088,7 @@ impl DesktopManager {
 }
 
 fn pam_get_service_name() -> String {
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = crate::get_app_name_real().to_lowercase();
     if Path::new(&format!("/etc/pam.d/{app_name}")).is_file() {
         app_name
     } else {

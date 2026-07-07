@@ -93,7 +93,7 @@ fn macos_service_ipc_allows_gui_and_service_binaries(
 
     // On installed macOS builds, `_service` is listened by the `service` binary while the GUI
     // process connects from the app executable within the same app bundle.
-    let gui_exe_name = std::ffi::OsString::from(crate::get_app_name());
+    let gui_exe_name = std::ffi::OsString::from(crate::get_app_name_real());
     let gui_exe = gui_exe_name.as_os_str();
     let service_exe = std::ffi::OsStr::new("service");
     let allowed_exe = [Some(gui_exe), Some(service_exe)];

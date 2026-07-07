@@ -308,7 +308,7 @@ pub fn core_main() -> Option<Vec<String>> {
             } else if args[0] == "--install-remote-printer" {
                 #[cfg(windows)]
                 if crate::platform::is_win_10_or_greater() {
-                    match remote_printer::install_update_printer(&crate::get_app_name()) {
+                    match remote_printer::install_update_printer(&crate::get_app_name_real()) {
                         Ok(_) => {
                             log::info!("Remote printer installed/updated successfully");
                         }
@@ -323,7 +323,7 @@ pub fn core_main() -> Option<Vec<String>> {
             } else if args[0] == "--uninstall-remote-printer" {
                 #[cfg(windows)]
                 if crate::platform::is_win_10_or_greater() {
-                    remote_printer::uninstall_printer(&crate::get_app_name());
+                    remote_printer::uninstall_printer(&crate::get_app_name_real());
                     log::info!("Remote printer uninstalled");
                 }
                 return None;
@@ -396,7 +396,7 @@ pub fn core_main() -> Option<Vec<String>> {
                 hbb_common::allow_err!(crate::platform::check_autostart_config());
                 std::process::Command::new("pkill")
                     .arg("-f")
-                    .arg(&format!("{} --tray", crate::get_app_name().to_lowercase()))
+                    .arg(&format!("{} --tray", crate::get_app_name_real().to_lowercase()))
                     .status()
                     .ok();
                 hbb_common::allow_err!(crate::run_me(vec!["--tray"]));
@@ -835,7 +835,7 @@ fn core_main_invoke_new_connection(mut args: std::env::Args) -> Option<Vec<Strin
     let mut uni_links = Default::default();
     if let Some(authority) = authority {
         if let Some(mut id) = id {
-            let app_name = crate::get_app_name();
+            let app_name = crate::get_app_name_real();
             let ext = format!(".{}", app_name.to_lowercase());
             if id.ends_with(&ext) {
                 id = id.replace(&ext, "");
@@ -864,7 +864,7 @@ fn core_main_invoke_new_connection(mut args: std::env::Args) -> Option<Vec<Strin
         use winapi::um::winuser::WM_USER;
         let res = crate::platform::send_message_to_hnwd(
             &crate::platform::FLUTTER_RUNNER_WIN32_WINDOW_CLASS,
-            &crate::get_app_name(),
+            &crate::get_app_name_real(),
             (WM_USER + 2) as _, // referred from unilinks desktop pub
             uni_links.as_str(),
             false,

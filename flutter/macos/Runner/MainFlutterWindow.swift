@@ -37,7 +37,7 @@ class RelativeMouseState {
 
 class MainFlutterWindow: NSWindow {
     override func awakeFromNib() {
-        rustdesk_core_main();
+        remotesq_core_main();
         let flutterViewController = FlutterViewController.init()
         let windowFrame = self.frame
         self.contentViewController = flutterViewController
@@ -179,7 +179,7 @@ class MainFlutterWindow: NSWindow {
     }
 
     public func setMethodHandler(registrar: FlutterPluginRegistrar) {
-        let channel = FlutterMethodChannel(name: "org.rustdesk.rustdesk/host", binaryMessenger: registrar.messenger)
+        let channel = FlutterMethodChannel(name: "org.remotesq.remotesq/host", binaryMessenger: registrar.messenger)
         channel.setMethodCallHandler({
             (call, result) -> Void in
                 switch call.method {

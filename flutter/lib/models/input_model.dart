@@ -350,7 +350,7 @@ class InputModel {
     if (_sideButtonChannelInitialized) return;
     _sideButtonChannelInitialized = true;
 
-    const channel = MethodChannel('org.rustdesk.rustdesk/side_buttons');
+    const channel = MethodChannel('org.remotesq.remotesq/side_buttons');
     channel.setMethodCallHandler((call) async {
       if (call.method == 'onSideMouseButton') {
         final args = call.arguments as Map<dynamic, dynamic>;

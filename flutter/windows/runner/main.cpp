@@ -22,17 +22,17 @@ const wchar_t* getWindowClassName();
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
-  HINSTANCE hInstance = LoadLibraryA("librustdesk.dll");
+  HINSTANCE hInstance = LoadLibraryA("libremotesq.dll");
   if (!hInstance)
   {
-    std::cout << "Failed to load librustdesk.dll." << std::endl;
+    std::cout << "Failed to load libremotesq.dll." << std::endl;
     return EXIT_FAILURE;
   }
   FUNC_RUSTDESK_CORE_MAIN rustdesk_core_main =
-      (FUNC_RUSTDESK_CORE_MAIN)GetProcAddress(hInstance, "rustdesk_core_main_args");
+      (FUNC_RUSTDESK_CORE_MAIN)GetProcAddress(hInstance, "remotesq_core_main_args");
   if (!rustdesk_core_main)
   {
-    std::cout << "Failed to get rustdesk_core_main." << std::endl;
+    std::cout << "Failed to get remotesq_core_main." << std::endl;
     return EXIT_FAILURE;
   }
   FUNC_RUSTDESK_FREE_ARGS free_c_args =
@@ -64,10 +64,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   free_c_args(c_args, args_len);
 
   std::wstring app_name = L"RustDesk";
-  FUNC_RUSTDESK_GET_APP_NAME get_rustdesk_app_name = (FUNC_RUSTDESK_GET_APP_NAME)GetProcAddress(hInstance, "get_rustdesk_app_name");
-  if (get_rustdesk_app_name) {
+  FUNC_RUSTDESK_GET_APP_NAME get_remotesq_app_name = (FUNC_RUSTDESK_GET_APP_NAME)GetProcAddress(hInstance, "get_remotesq_app_name");
+  if (get_remotesq_app_name) {
     wchar_t app_name_buffer[512] = {0};
-    if (get_rustdesk_app_name(app_name_buffer, 512) == 0) {
+    if (get_remotesq_app_name(app_name_buffer, 512) == 0) {
       app_name = std::wstring(app_name_buffer);
     }
   }

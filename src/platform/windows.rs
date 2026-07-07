@@ -530,7 +530,7 @@ fn service_main(arguments: Vec<OsString>) {
 
 pub fn start_os_service() {
     if let Err(e) =
-        windows_service::service_dispatcher::start(crate::get_app_name(), ffi_service_main)
+        windows_service::service_dispatcher::start(crate::get_app_name_real(), ffi_service_main)
     {
         log::error!("start_service failed: {}", e);
     }
@@ -651,7 +651,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     };
 
     // Register system service event handler
-    let status_handle = service_control_handler::register(crate::get_app_name(), event_handler)?;
+    let status_handle = service_control_handler::register(crate::get_app_name_real(), event_handler)?;
 
     let next_status = ServiceStatus {
         // Should match the one from system service registry
@@ -1295,7 +1295,7 @@ fn get_valid_subkey() -> String {
     if !get_reg_of(&subkey, "InstallLocation").is_empty() {
         return subkey;
     }
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
     let subkey = get_subkey(&app_name, true);
     if !get_reg_of(&subkey, "InstallLocation").is_empty() {
         return subkey;
@@ -1305,7 +1305,7 @@ fn get_valid_subkey() -> String {
 
 // Return install options other than InstallLocation.
 pub fn get_install_options() -> String {
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
     let subkey = format!(".{}", app_name.to_lowercase());
     let mut opts = HashMap::new();
 
@@ -1328,7 +1328,7 @@ pub fn get_silent_install_options(printer_override: Option<bool>) -> &'static st
     let install_printer = match printer_override {
         Some(override_value) => override_value,
         None => {
-            let app_name = crate::get_app_name();
+            let app_name = crate::get_app_name_real();
             let subkey = format!(".{}", app_name.to_lowercase());
             let printer = get_reg_of_hkcr(&subkey, REG_NAME_INSTALL_PRINTER);
             printer.as_deref() == Some("1")
@@ -1355,7 +1355,7 @@ pub fn get_install_info() -> (String, String, String, String) {
 }
 
 fn get_default_install_info() -> (String, String, String, String) {
-    get_install_info_with_subkey(get_subkey(&crate::get_app_name(), false))
+    get_install_info_with_subkey(get_subkey(&crate::get_app_name_real(), false))
 }
 
 fn get_default_install_path() -> String {
@@ -1372,7 +1372,7 @@ fn get_default_install_path() -> String {
             pf = tmp;
         }
     }
-    format!("{}\\{}", pf, crate::get_app_name())
+    format!("{}\\{}", pf, crate::get_app_name_real())
 }
 
 pub fn check_update_broker_process() -> ResultType<()> {
@@ -1428,9 +1428,9 @@ fn get_install_info_with_subkey(subkey: String) -> (String, String, String, Stri
     path = path.trim_end_matches('\\').to_owned();
     let start_menu = format!(
         "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\{}",
-        crate::get_app_name()
+        crate::get_app_name_real()
     );
-    let exe = format!("{}\\{}.exe", path, crate::get_app_name());
+    let exe = format!("{}\\{}.exe", path, crate::get_app_name_real());
     (subkey, path, start_menu, exe)
 }
 
@@ -1466,7 +1466,7 @@ pub fn rename_exe_cmd(src_exe: &str, path: &str) -> ResultType<String> {
         .ok_or(anyhow!("Can't get file name of {src_exe}"))?
         .to_string_lossy()
         .to_string();
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = crate::get_app_name_real().to_lowercase();
     if src_exe_filename.to_lowercase() == format!("{app_name}.exe") {
         Ok("".to_owned())
     } else {
@@ -1497,7 +1497,7 @@ fn get_after_install(
     reg_value_desktop_shortcuts: Option<String>,
     reg_value_printer: Option<String>,
 ) -> String {
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
     let ext = app_name.to_lowercase();
 
     // reg delete HKEY_CURRENT_USER\Software\Classes for
@@ -1575,7 +1575,7 @@ pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> Res
     if versions.len() > 2 {
         version_build = versions[2];
     }
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
 
     let current_exe = std::env::current_exe()?;
 
@@ -1628,7 +1628,7 @@ oLink.Save
         shortcuts = format!(
             "copy /Y \"{}\\{}.lnk\" \"%PUBLIC%\\Desktop\\\"",
             tmp_path,
-            crate::get_app_name()
+            crate::get_app_name_real()
         );
         reg_value_desktop_shortcuts = "1".to_owned();
     }
@@ -1763,7 +1763,7 @@ pub fn run_before_uninstall() -> ResultType<()> {
 }
 
 fn get_before_uninstall(kill_self: bool) -> String {
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
     let ext = app_name.to_lowercase();
     let filter = if kill_self {
         "".to_string()
@@ -1828,7 +1828,7 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
     ",
         before_uninstall=get_before_uninstall(kill_self),
         uninstall_amyuni_idd=get_uninstall_amyuni_idd(),
-        app_name = crate::get_app_name(),
+        app_name = crate::get_app_name_real(),
     )
 }
 
@@ -1848,7 +1848,7 @@ fn write_cmds(cmds: String, ext: &str, tip: &str) -> ResultType<std::path::PathB
             tmp = dir;
         }
     }
-    tmp.push(format!("{}_{}.{}", crate::get_app_name(), tip, ext));
+    tmp.push(format!("{}_{}.{}", crate::get_app_name_real(), tip, ext));
     let mut file = std::fs::File::create(&tmp)?;
     if ext == "bat" {
         let tmp2 = get_undone_file(&tmp)?;
@@ -2142,7 +2142,7 @@ pub fn update_install_option(k: &str, v: &str) -> ResultType<()> {
     if ![REG_NAME_INSTALL_PRINTER].contains(&k) || !["0", "1"].contains(&v) {
         return Ok(());
     }
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
     let ext = app_name.to_lowercase();
     let cmds =
         format!("chcp 65001 && reg add HKEY_CLASSES_ROOT\\.{ext} /f /v {k} /t REG_SZ /d \"{v}\"");
@@ -3171,7 +3171,7 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     taskkill /F /IM {broker_exe}
     taskkill /F /IM {app_name}.exe{filter}
     ",
-        app_name = crate::get_app_name(),
+        app_name = crate::get_app_name_real(),
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
     );
     if let Err(err) = run_cmds(cmds, false, "uninstall") {
@@ -3202,7 +3202,7 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
 {create_service}
 if exist \"{tray_shortcut}\" del /f /q \"{tray_shortcut}\"
     ",
-        app_name = crate::get_app_name(),
+        app_name = crate::get_app_name_real(),
         import_config = get_import_config(&exe),
         create_service = get_create_service(&exe),
     );
@@ -3255,7 +3255,7 @@ fn get_directory_size_kb(path: &str) -> u64 {
 }
 
 pub fn update_me(debug: bool) -> ResultType<()> {
-    let app_name = crate::get_app_name();
+    let app_name = crate::get_app_name_real();
     let src_exe = std::env::current_exe()?.to_string_lossy().to_string();
     let (subkey, path, _, exe) = get_install_info();
     let is_installed = std::fs::metadata(&exe).is_ok();
@@ -3673,7 +3673,7 @@ Set oLink = oWS.CreateShortcut(sLinkFile)
     {shortcut_icon_location}
 oLink.Save
         ",
-            app_name = crate::get_app_name(),
+            app_name = crate::get_app_name_real(),
         ),
         "vbs",
         "tray_shortcut",
@@ -3695,7 +3695,7 @@ sc start {app_name}
 sc stop {app_name}
 sc delete {app_name}
 ",
-    app_name = crate::get_app_name(),
+    app_name = crate::get_app_name_real(),
     config_path=Config::file().to_str().unwrap_or(""),
 )
 }
@@ -3708,13 +3708,13 @@ fn get_create_service(exe: &str) -> String {
     if stop {
         format!("
 if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
-", app_name = crate::get_app_name())
+", app_name = crate::get_app_name_real())
     } else {
         format!("
 sc create {app_name} binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
 sc start {app_name}
 ",
-    app_name = crate::get_app_name())
+    app_name = crate::get_app_name_real())
     }
 }
 
@@ -3923,7 +3923,7 @@ fn get_uninstall_amyuni_idd() -> String {
 
 #[inline]
 pub fn is_self_service_running() -> bool {
-    is_service_running(&crate::get_app_name())
+    is_service_running(&crate::get_app_name_real())
 }
 
 pub fn is_service_running(service_name: &str) -> bool {
@@ -3954,7 +3954,7 @@ pub fn release_arch_suffix() -> Option<&'static str> {
 pub fn try_kill_rustdesk_main_window_process() -> ResultType<()> {
     // Kill rustdesk.exe without extra arg, should only be called by --server
     // We can find the exact process which occupies the ipc, see more from https://github.com/winsiderss/systeminformer
-    let app_name = crate::get_app_name().to_lowercase();
+    let app_name = crate::get_app_name_real().to_lowercase();
     log::info!("try kill main window process");
     use hbb_common::sysinfo::System;
     let mut sys = System::new();
@@ -4312,7 +4312,7 @@ pub fn is_msi_installed() -> std::io::Result<bool> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let uninstall_key = hklm.open_subkey(format!(
         "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}",
-        crate::get_app_name()
+        crate::get_app_name_real()
     ))?;
     Ok(1 == uninstall_key.get_value::<u32, _>("WindowsInstaller")?)
 }

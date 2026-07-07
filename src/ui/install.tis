@@ -44,7 +44,7 @@ class Install: Reactor.Component {
           install_path = install_path.urlUnescape();
           install_path = install_path.replace("file://", "").replace("/", "\\");
           if (install_path[install_path.length - 1] != "\\") install_path += "\\";
-          install_path += handler.get_app_name();
+          install_path += handler.get_app_name_real();
           $(#path_input).value = install_path;
         }
     }

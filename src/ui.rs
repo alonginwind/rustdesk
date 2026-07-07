@@ -14,7 +14,7 @@ use hbb_common::{
 
 #[cfg(not(feature = "flutter"))]
 use crate::ui_session_interface::Session;
-use crate::{common::get_app_name, ipc, ui_interface::*};
+use crate::{common::get_app_name, common::get_app_name_real, ipc, ui_interface::*};
 
 mod cm;
 #[cfg(feature = "inline")]
@@ -538,6 +538,10 @@ impl UI {
         get_app_name()
     }
 
+    fn get_app_name_real(&self) -> String {
+        get_app_name_real()
+    }
+
     fn get_software_ext(&self) -> String {
         #[cfg(windows)]
         let p = "exe";
@@ -556,7 +560,7 @@ impl UI {
             .split("/")
             .last()
             .map(|x| x.to_owned())
-            .unwrap_or(crate::get_app_name());
+            .unwrap_or(crate::get_app_name_real());
         p.push(name);
         format!("{}.{}", p.to_string_lossy(), self.get_software_ext())
     }
@@ -795,6 +799,7 @@ impl sciter::EventHandler for UI {
         fn show_run_without_install();
         fn run_without_install();
         fn get_app_name();
+        fn get_app_name_real();
         fn get_software_store_path();
         fn get_software_ext();
         fn open_url(String);

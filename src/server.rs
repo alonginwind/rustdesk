@@ -149,7 +149,7 @@ pub fn new() -> ServerPtr {
     }
     #[cfg(all(target_os = "windows", feature = "flutter"))]
     {
-        match printer_service::init(&crate::get_app_name()) {
+        match printer_service::init(&crate::get_app_name_real()) {
             Ok(()) => {
                 log::info!("printer service initialized");
                 server.add_service(Box::new(printer_service::new(

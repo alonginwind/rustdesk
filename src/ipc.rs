@@ -759,7 +759,7 @@ async fn handle(data: Data, stream: &mut Connection) {
                         hbb_common::sleep(1.5).await;
                         std::process::Command::new("open")
                             .arg("-n")
-                            .arg(&format!("/Applications/{}.app", crate::get_app_name()))
+                            .arg(&format!("/Applications/{}.app", crate::get_app_name_real()))
                             .spawn()
                             .ok();
                     }
@@ -1381,7 +1381,7 @@ pub async fn start_pa() {
                             let mut buf: Vec<u8> = vec![0; AUDIO_DATA_SIZE_U8];
                             match psimple::Simple::new(
                                 None,                             // Use the default server
-                                &crate::get_app_name(),           // Our application’s name
+                                &crate::get_app_name_real(),           // Our application’s name
                                 pulse::stream::Direction::Record, // We want a record stream
                                 Some(&device),                    // Use the default device
                                 "record",                         // Description of our stream
