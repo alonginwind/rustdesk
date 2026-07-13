@@ -9,7 +9,7 @@ default-run = "rustdesk"
 rust-version = "1.75"
 
 [lib]
-name = "librustdesk"
+name = "miraconn"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]

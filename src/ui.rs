@@ -556,7 +556,7 @@ impl UI {
             .split("/")
             .last()
             .map(|x| x.to_owned())
-            .unwrap_or(crate::get_app_name());
+            .unwrap_or(crate::get_app_name_real());
         p.push(name);
         format!("{}.{}", p.to_string_lossy(), self.get_software_ext())
     }

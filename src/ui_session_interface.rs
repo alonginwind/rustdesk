@@ -1667,7 +1667,7 @@ impl<T: InvokeUiSession> Session<T> {
 
     pub fn printer_response(&self, id: i32, path: String, printer_name: String) {
         self.printer_names.write().unwrap().insert(id, printer_name);
-        let to = std::env::temp_dir().join(format!("rustdesk_printer_{id}"));
+        let to = std::env::temp_dir().join(format!("miraconn_printer_{id}"));
         self.send(Data::SendFiles((
             id,
             hbb_common::fs::JobType::Printer,
@@ -1857,7 +1857,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
         {
             let mut path = std::env::temp_dir();
             path.push(self.get_id());
-            let path = path.with_extension(crate::get_app_name().to_lowercase());
+            let path = path.with_extension(crate::get_app_name_real().to_lowercase());
             std::fs::File::create(&path).ok();
             if let Some(path) = path.to_str() {
                 crate::platform::windows::add_recent_document(&path);

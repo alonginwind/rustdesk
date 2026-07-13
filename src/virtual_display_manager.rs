@@ -6,7 +6,7 @@ pub const RUSTDESK_IDD_DEVICE_STRING: &'static str = "RustDeskIddDriver Device\0
 pub const AMYUNI_IDD_DEVICE_STRING: &'static str = "USB Mobile Monitor Virtual Display\0";
 
 const IDD_IMPL: &str = IDD_IMPL_AMYUNI;
-const IDD_IMPL_RUSTDESK: &str = "rustdesk_idd";
+const IDD_IMPL_RUSTDESK: &str = "miraconn_idd";
 const IDD_IMPL_AMYUNI: &str = "amyuni_idd";
 const IDD_PLUG_OUT_ALL_INDEX: i32 = -1;
 
@@ -52,7 +52,7 @@ pub fn get_platform_additions() -> serde_json::Map<String, serde_json::Value> {
             let virtual_displays = rustdesk_idd::get_virtual_displays();
             if !virtual_displays.is_empty() {
                 map.insert(
-                    "rustdesk_virtual_displays".into(),
+                    "miraconn_virtual_displays".into(),
                     serde_json::json!(virtual_displays),
                 );
             }

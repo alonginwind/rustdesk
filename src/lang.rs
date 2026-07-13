@@ -223,13 +223,13 @@ pub fn translate_locale(name: String, locale: &str) -> String {
             s = s.replace("{}", &value);
         }
         if !crate::is_rustdesk() {
-            if s.contains("RustDesk")
-                && !name.starts_with("upgrade_rustdesk_server_pro")
+            if s.contains("MiraConn")
+                && !name.starts_with("upgrade_miraconn_server_pro")
                 && name != "powered_by_me"
             {
                 let app_name = crate::get_app_name();
-                if !app_name.contains("RustDesk") {
-                    s = s.replace("RustDesk", &app_name);
+                if !app_name.contains("MiraConn") {
+                    s = s.replace("MiraConn", &app_name);
                 } else {
                     // https://github.com/rustdesk/rustdesk-server-pro/issues/845
                     // If app_name contains "RustDesk" (e.g., "RustDesk-Admin"), we need to avoid
@@ -240,7 +240,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
                     const PLACEHOLDER: &str = "#A-P-P-N-A-M-E#";
                     if !s.contains(PLACEHOLDER) {
                         s = s.replace(&app_name, PLACEHOLDER);
-                        s = s.replace("RustDesk", &app_name);
+                        s = s.replace("MiraConn", &app_name);
                         s = s.replace(PLACEHOLDER, &app_name);
                     } else {
                         // It's very unlikely to reach here.

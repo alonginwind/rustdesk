@@ -1004,14 +1004,23 @@ pub fn get_app_name() -> String {
     hbb_common::config::APP_NAME.read().unwrap().clone()
 }
 
+#[cfg(not(any(target_os = "android")))]
+#[inline]
+pub fn get_app_name_real() -> String {
+    hbb_common::config::APP_NAME_REAL.read().unwrap().clone()
+}
+
 #[inline]
 pub fn is_rustdesk() -> bool {
-    hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
+    hbb_common::config::APP_NAME.read().unwrap().eq("MiraConn")
 }
 
 #[inline]
 pub fn get_uri_prefix() -> String {
-    format!("{}://", get_app_name().to_lowercase())
+    #[cfg(not(any(target_os = "android")))]
+    return format!("{}://", get_app_name_real().to_lowercase());
+    #[cfg(any(target_os = "android"))]
+    return format!("{}://", get_app_name().to_lowercase());
 }
 
 #[cfg(target_os = "macos")]
@@ -1068,7 +1077,7 @@ fn get_api_server_(_api: String, _custom: String) -> String {
 #[inline]
 pub fn is_public(url: &str) -> bool {
     let url = url.to_ascii_lowercase();
-    url.contains("rustdesk.com/") || url.ends_with("rustdesk.com")
+    url.contains("miraconn.com/") || url.ends_with("miraconn.com")
 }
 
 pub fn get_udp_punch_enabled() -> bool {
@@ -2013,7 +2022,8 @@ pub fn create_symmetric_key_msg(their_pk_b: [u8; 32]) -> (Bytes, Bytes, secretbo
 
 #[inline]
 pub fn using_public_server() -> bool {
-    crate::get_custom_rendezvous_server(get_option("custom-rendezvous-server")).is_empty()
+    //crate::get_custom_rendezvous_server(get_option("custom-rendezvous-server")).is_empty()
+    false
 }
 
 pub struct ThrottledInterval {
@@ -2263,7 +2273,7 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    get_app_name() != "RustDesk"
+    get_app_name() != "MiraConn"
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {

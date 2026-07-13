@@ -913,6 +913,9 @@ pub fn get_langs() -> String {
 
 #[inline]
 pub fn video_save_directory(root: bool) -> String {
+    #[cfg(not(any(target_os = "android")))]
+    let appname = crate::get_app_name_real();
+    #[cfg(any(target_os = "android"))]
     let appname = crate::get_app_name();
     // ui process can show it correctly Once vidoe process created it.
     let try_create = |path: &std::path::Path| {

@@ -135,7 +135,7 @@ fn is_valid_capture_frame_length(shmem_len: usize, frame_len: usize) -> bool {
 #[inline]
 fn shared_memory_flink_path_by_name(name: &str) -> ResultType<PathBuf> {
     let mut dir = crate::platform::user_accessible_folder()?;
-    dir = dir.join(hbb_common::config::APP_NAME.read().unwrap().clone());
+    dir = dir.join(hbb_common::config::APP_NAME_REAL.read().unwrap().clone());
     dir = dir.join(SHMEM_PARENT_DIR);
     Ok(dir.join(format!("shared_memory{}", name)))
 }
@@ -321,7 +321,7 @@ impl SharedMemory {
 
     fn flink(name: String) -> ResultType<String> {
         let mut dir = crate::platform::user_accessible_folder()?;
-        dir = dir.join(hbb_common::config::APP_NAME.read().unwrap().clone());
+        dir = dir.join(hbb_common::config::APP_NAME_REAL.read().unwrap().clone());
         dir = dir.join(SHMEM_PARENT_DIR);
         let parent_created = !dir.exists();
         if parent_created {
@@ -846,7 +846,7 @@ pub mod client {
     }
 
     fn has_running_portable_service_process() -> bool {
-        let app_exe = format!("{}.exe", crate::get_app_name().to_lowercase());
+        let app_exe = format!("{}.exe", crate::get_app_name_real().to_lowercase());
         !crate::platform::get_pids_of_process_with_first_arg(&app_exe, "--portable-service")
             .is_empty()
     }

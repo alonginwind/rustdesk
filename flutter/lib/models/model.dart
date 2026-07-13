@@ -4156,7 +4156,7 @@ class PeerInfo with ChangeNotifier {
   bool get cursorEmbedded => tryGetDisplay()?.cursorEmbedded ?? false;
 
   bool get isRustDeskIdd =>
-      platformAdditions[kPlatformAdditionsIddImpl] == 'rustdesk_idd';
+      platformAdditions[kPlatformAdditionsIddImpl] == 'miraconn_idd';
   bool get isAmyuniIdd =>
       platformAdditions[kPlatformAdditionsIddImpl] == 'amyuni_idd';
 

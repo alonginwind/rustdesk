@@ -18,7 +18,7 @@ import 'package:url_launcher/url_launcher.dart';
 bool isEditOsPassword = false;
 const String kPeerOptionAllowWaylandKeyboard = 'allow-wayland-keyboard';
 const String kWaylandKeyboardIssueUrl =
-    'https://github.com/rustdesk/rustdesk/issues/14586';
+    'https://github.com/miraconn/miraconn/issues/14586';
 final Set<String> _waylandKeyboardPromptSuppressedConnectionIds = <String>{};
 
 Future<bool> openWaylandKeyboardIssueUrl() {

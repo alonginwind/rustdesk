@@ -97,8 +97,8 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.carriez.flutter_hbb"
-        minSdkVersion 22
+        applicationId "com.miraconn.app"
+        minSdkVersion 24
         targetSdkVersion 33
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
@@ -110,6 +110,10 @@ android {
         keyPassword keystoreProperties['keyPassword']
         storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
         storePassword keystoreProperties['storePassword']
+        // 启用 v2 签名以提供 Android 7.0+ 的全 APK 文件签名
+        enableV2Signing = true
+        // 启用 v3 签名以支持密钥轮换 (Android 9.0+)
+        enableV3Signing = true
       }
     }
 
@@ -118,6 +122,10 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig signingConfigs.release
+            // 启用 R8 代码混淆与压缩
+            minifyEnabled true
+            // 启用资源压缩，移除未使用的资源
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules'
         }
     }

@@ -14,7 +14,7 @@ class RdPlatformChannel {
   static RdPlatformChannel get instance => _windowUtil;
 
   final MethodChannel _hostMethodChannel =
-      MethodChannel("org.rustdesk.rustdesk/host");
+      MethodChannel("org.miraconn.miraconn/host");
 
   /// Bump the position of the mouse cursor, if applicable
   Future<bool> bumpMouse({required int dx, required int dy}) async {

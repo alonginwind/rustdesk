@@ -189,9 +189,9 @@ set(RUSTDESK_LIB_BUILD_TYPE $<IF:$<CONFIG:Debug>,debug,release>)
 string(TOLOWER ${CMAKE_BUILD_TYPE} ${RUSTDESK_LIB_BUILD_TYPE})
 message(STATUS "rustdesk lib build type: ${RUSTDESK_LIB_BUILD_TYPE}")
 
-set(RUSTDESK_LIB "../../target/${RUSTDESK_LIB_BUILD_TYPE}/liblibrustdesk.so")
+set(RUSTDESK_LIB "../../target/${RUSTDESK_LIB_BUILD_TYPE}/libmiraconn.so")
 install(FILES "${RUSTDESK_LIB}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-COMPONENT Runtime RENAME librustdesk.so)
+COMPONENT Runtime RENAME libmiraconn.so)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

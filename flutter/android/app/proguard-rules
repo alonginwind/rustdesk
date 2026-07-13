@@ -5,3 +5,30 @@
 
 # Keep rustls-platform-verifier classes for JNI
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+
+# Keep FFI class — JNI entry point for Rust native library (libmiraconn.so)
+# All external functions are called from Rust via JNI by name
+-keep class ffi.FFI { *; }
+-keep class ffi.FFI$* { *; }
+
+# Keep MainService methods called from Rust via JNI (@Keep annotated)
+-keep class com.miraconn.app.MainService { 
+    public <methods>;
+}
+
+# Keep RdClipboardManager — called from Rust via JNI
+-keep class com.miraconn.app.RdClipboardManager {
+    public <methods>;
+}
+
+# Keep XXPermissions library
+-keep class com.hjq.permissions.** { *; }
+-keepclassmembers class com.hjq.permissions.** { *; }
+
+# Keep Flutter embedding classes
+-dontwarn io.flutter.embedding.**
+-keep class io.flutter.app.** { *; }
+-keep class io.flutter.plugin.**  { *; }
+-keep class io.flutter.util.**  { *; }
+-keep class io.flutter.view.**  { *; }
+-keep class io.flutter.**  { *; }
