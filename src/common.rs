@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::{json, Map, Value};
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::whoami;
 use hbb_common::{
     allow_err,
@@ -829,7 +829,7 @@ pub fn username() -> String {
 // Exactly the implementation of "whoami::hostname()".
 // This wrapper is to suppress warnings.
 #[inline(always)]
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn whoami_hostname() -> String {
     let mut hostname = whoami::fallible::hostname().unwrap_or_else(|_| "localhost".to_string());
     hostname.make_ascii_lowercase();
@@ -1773,7 +1773,7 @@ pub fn make_empty_dirs_response_to_json(res: &ReadEmptyDirsResponse) -> String {
 /// 1. Try to send the url scheme from ipc.
 /// 2. If failed to send the url scheme, we open a new main window to handle this url scheme.
 pub fn handle_url_scheme(url: String) {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Err(err) = crate::ipc::send_url_scheme(url.clone()) {
         log::debug!("Send the url to the existing flutter process failed, {}. Let's open a new program to handle this.", err);
         let _ = crate::run_me(vec![url]);
@@ -1799,9 +1799,9 @@ pub async fn get_key(sync: bool) -> String {
             return lic.key;
         }
     }
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     let mut key = Config::get_option("key");
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let mut key = if sync {
         Config::get_option("key")
     } else {

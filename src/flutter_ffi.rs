@@ -325,7 +325,7 @@ pub fn session_toggle_option(session_id: SessionID, value: String) {
         session.toggle_option(value.clone());
         try_sync_peer_option(&session, &session_id, &value, None);
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if sessions::get_session_by_session_id(&session_id).is_some()
         && (value == "disable-clipboard" || value == "view-only")
     {
@@ -995,20 +995,6 @@ pub fn main_set_option(key: String, value: String) {
             return;
         }
     }
-    #[cfg(target_os = "android")]
-    if key.eq(config::keys::OPTION_ENABLE_KEYBOARD) {
-        crate::ui_cm_interface::switch_permission_all(
-            "keyboard".to_owned(),
-            config::option2bool(&key, &value),
-        );
-    }
-    #[cfg(target_os = "android")]
-    if key.eq(config::keys::OPTION_ENABLE_CLIPBOARD) {
-        crate::ui_cm_interface::switch_permission_all(
-            "clipboard".to_owned(),
-            config::option2bool(&key, &value),
-        );
-    }
 
     // If `is_allow_tls_fallback` and https proxy is used, we need to restart rendezvous mediator.
     // No need to check if https proxy is used, because this option does not change frequently
@@ -1024,8 +1010,6 @@ pub fn main_set_option(key: String, value: String) {
             hbb_common::tls::reset_tls_cache();
         }
         set_option(key, value.clone());
-        #[cfg(target_os = "android")]
-        crate::rendezvous_mediator::RendezvousMediator::restart();
         #[cfg(any(target_os = "android", target_os = "ios"))]
         crate::common::test_rendezvous_server();
     } else {
@@ -1579,13 +1563,13 @@ fn main_broadcast_message(data: &HashMap<&str, &str>) {
 
 pub fn main_change_theme(dark: String) {
     main_broadcast_message(&HashMap::from([("name", "theme"), ("dark", &dark)]));
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     send_to_cm(&crate::ipc::Data::Theme(dark));
 }
 
 pub fn main_change_language(lang: String) {
     main_broadcast_message(&HashMap::from([("name", "language"), ("lang", &lang)]));
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     send_to_cm(&crate::ipc::Data::Language(lang));
 }
 
@@ -1610,11 +1594,11 @@ pub fn main_is_option_fixed(key: String) -> SyncReturn<bool> {
 }
 
 pub fn main_get_main_display() -> SyncReturn<String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     let display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let mut display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         #[cfg(not(target_os = "linux"))]
         let is_linux_wayland = false;
@@ -1655,11 +1639,11 @@ pub fn main_get_main_display() -> SyncReturn<String> {
 // No need to check if is on Wayland in this function.
 // The Flutter side gets display information on Wayland using a different method.
 pub fn main_get_displays() -> SyncReturn<String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     let display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let mut display_info = "".to_owned();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Ok(displays) = crate::display_service::try_get_displays() {
         let displays = displays
             .iter()
@@ -2131,20 +2115,9 @@ pub fn main_get_data_dir_ios(app_dir: String) -> SyncReturn<String> {
 }
 
 pub fn main_stop_service() {
-    #[cfg(target_os = "android")]
-    {
-        config::Config::set_option("stop-service".into(), "Y".into());
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
 }
 
 pub fn main_start_service() {
-    #[cfg(target_os = "android")]
-    {
-        config::Config::set_option("stop-service".into(), "".into());
-        crate::rendezvous_mediator::reset_needs_deploy_notification();
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
 }
 
 pub fn main_update_temporary_password() {
@@ -2180,7 +2153,7 @@ pub fn main_get_mouse_time() -> f64 {
 
 pub fn main_wol(id: String) {
     // TODO: move send_wol outside.
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::lan::send_wol(id)
 }
 
@@ -2190,12 +2163,12 @@ pub fn main_create_shortcut(_id: String) {
 }
 
 pub fn cm_send_chat(conn_id: i32, msg: String) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::ui_cm_interface::send_chat(conn_id, msg);
 }
 
 pub fn cm_login_res(conn_id: i32, res: bool) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if res {
         crate::ui_cm_interface::authorize(conn_id);
     } else {
@@ -2204,29 +2177,29 @@ pub fn cm_login_res(conn_id: i32, res: bool) {
 }
 
 pub fn cm_close_connection(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::ui_cm_interface::close(conn_id);
 }
 
 pub fn cm_remove_disconnected_connection(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::ui_cm_interface::remove(conn_id);
 }
 
 pub fn cm_check_click_time(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::ui_cm_interface::check_click_time(conn_id)
 }
 
 pub fn cm_get_click_time() -> f64 {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     return crate::ui_cm_interface::get_click_time() as _;
-    #[cfg(any(target_os = "ios"))]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     return 0 as _;
 }
 
 pub fn cm_switch_permission(conn_id: i32, name: String, enabled: bool) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::ui_cm_interface::switch_permission(conn_id, name, enabled)
 }
 
@@ -2235,7 +2208,7 @@ pub fn cm_can_elevate() -> SyncReturn<bool> {
 }
 
 pub fn cm_elevate_portable(conn_id: i32) {
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::ui_cm_interface::elevate_portable(conn_id);
 }
 
@@ -2245,7 +2218,7 @@ pub fn cm_switch_back(conn_id: i32) {
 }
 
 pub fn cm_get_config(name: String) -> String {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         if let Ok(Some(v)) = crate::ipc::get_config(&name) {
             v
@@ -2253,7 +2226,7 @@ pub fn cm_get_config(name: String) -> String {
             "".to_string()
         }
     }
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         "".to_string()
     }
@@ -3073,37 +3046,6 @@ pub mod server_side {
         JNIEnv,
     };
 
-    use crate::start_server;
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_startServer(
-        env: JNIEnv,
-        _class: JClass,
-        app_dir: JString,
-        custom_client_config: JString,
-    ) {
-        log::debug!("startServer from jvm");
-        let mut env = env;
-        if let Ok(app_dir) = env.get_string(&app_dir) {
-            *config::APP_DIR.write().unwrap() = app_dir.into();
-        }
-        if let Ok(custom_client_config) = env.get_string(&custom_client_config) {
-            if !custom_client_config.is_empty() {
-                let custom_client_config: String = custom_client_config.into();
-                crate::read_custom_client(&custom_client_config);
-            }
-        }
-        std::thread::spawn(move || start_server(true));
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_startService(_env: JNIEnv, _class: JClass) {
-        log::debug!("startService from jvm");
-        config::Config::set_option("stop-service".into(), "".into());
-        crate::rendezvous_mediator::reset_needs_deploy_notification();
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
-
     #[no_mangle]
     pub unsafe extern "system" fn Java_ffi_FFI_translateLocale(
         env: JNIEnv,
@@ -3121,11 +3063,6 @@ pub mod server_side {
             "".into()
         };
         return env.new_string(res).unwrap_or(input).into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_refreshScreen(_env: JNIEnv, _class: JClass) {
-        crate::server::video_service::refresh()
     }
 
     #[no_mangle]
@@ -3158,13 +3095,5 @@ pub mod server_side {
             "".into()
         };
         return env.new_string(res).unwrap_or_default().into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_isServiceClipboardEnabled(
-        env: JNIEnv,
-        _class: JClass,
-    ) -> jboolean {
-        jboolean::from(crate::server::is_clipboard_service_ok())
     }
 }

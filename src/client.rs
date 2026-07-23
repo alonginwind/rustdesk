@@ -79,7 +79,7 @@ use scrap::{
     CodecFormat, ImageFormat, ImageRgb, ImageTexture,
 };
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::clipboard::CLIPBOARD_INTERVAL;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::clipboard::{check_clipboard, ClipboardSide};
@@ -150,7 +150,7 @@ pub(crate) struct ClientClipboardContext {
 /// Client of the remote desktop.
 pub struct Client;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 struct ClipboardState {
     #[cfg(feature = "flutter")]
     is_text_required: bool,
@@ -169,7 +169,7 @@ lazy_static::lazy_static! {
     static ref ENIGO: Arc<Mutex<enigo::Enigo>> = Arc::new(Mutex::new(enigo::Enigo::new()));
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 lazy_static::lazy_static! {
     static ref CLIPBOARD_STATE: Arc<Mutex<ClipboardState>> = Arc::new(Mutex::new(ClipboardState::new()));
 }
@@ -928,7 +928,7 @@ impl Client {
 
     #[inline]
     #[cfg(feature = "flutter")]
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn set_is_text_clipboard_required(b: bool) {
         CLIPBOARD_STATE.lock().unwrap().is_text_required = b;
     }
@@ -939,7 +939,7 @@ impl Client {
         CLIPBOARD_STATE.lock().unwrap().is_file_required = b;
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_stop_clipboard() {
         // Disconnected Flutter sessions may keep UI handlers alive, so only connected sessions
         // should block clipboard cleanup.
@@ -1024,41 +1024,9 @@ impl Client {
 
         Some(rx_started)
     }
-
-    #[cfg(target_os = "android")]
-    fn try_start_clipboard(_p: Option<()>) -> Option<UnboundedReceiver<()>> {
-        let mut clipboard_lock = CLIPBOARD_STATE.lock().unwrap();
-        if clipboard_lock.running {
-            return None;
-        }
-        clipboard_lock.running = true;
-
-        log::info!("Start client clipboard loop");
-        std::thread::spawn(move || {
-            loop {
-                if !CLIPBOARD_STATE.lock().unwrap().running {
-                    break;
-                }
-                if !CLIPBOARD_STATE.lock().unwrap().is_text_required {
-                    std::thread::sleep(Duration::from_millis(CLIPBOARD_INTERVAL));
-                    continue;
-                }
-
-                if let Some(msg) = crate::clipboard::get_clipboards_msg(true) {
-                    crate::flutter::send_clipboard_msg(msg, false);
-                }
-
-                std::thread::sleep(Duration::from_millis(CLIPBOARD_INTERVAL));
-            }
-            log::info!("Stop client clipboard loop");
-            CLIPBOARD_STATE.lock().unwrap().running = false;
-        });
-
-        None
-    }
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 impl ClipboardState {
     fn new() -> Self {
         Self {
@@ -1364,7 +1332,7 @@ impl AudioHandler {
         log::info!("Remote input format: {:?}", format0);
         #[allow(unused_mut)]
         let mut config: StreamConfig = config.into();
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             // this makes ios audio output not work
             config.buffer_size = cpal::BufferSize::Fixed(64);

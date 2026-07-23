@@ -413,7 +413,7 @@ impl<T: InvokeUiSession> Session<T> {
         self.lc.read().unwrap().is_privacy_mode_supported()
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn is_text_clipboard_required(&self) -> bool {
         *self.server_clipboard_enabled.read().unwrap()
             && *self.server_keyboard_enabled.read().unwrap()
@@ -920,7 +920,7 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::Message(msg_out));
     }
 
-    #[cfg(any(target_os = "ios"))]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub fn handle_flutter_raw_key_event(
         &self,
         _keyboard_mode: &str,
@@ -932,7 +932,7 @@ impl<T: InvokeUiSession> Session<T> {
     ) {
     }
 
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn handle_flutter_raw_key_event(
         &self,
         keyboard_mode: &str,
@@ -955,7 +955,7 @@ impl<T: InvokeUiSession> Session<T> {
         }
     }
 
-    #[cfg(not(any(target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn _handle_raw_key_non_flutter_simulation(
         &self,
         keyboard_mode: &str,

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
 import 'package:get/get.dart';
@@ -51,10 +50,6 @@ class HomePageState extends State<HomePage> {
       _pages.add(ConnectionPage(
         appBarActions: [],
       ));
-    }
-    if (isAndroid && !bind.isOutgoingOnly()) {
-      _chatPageTabIndex = _pages.length;
-      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
     }
     _pages.add(SettingsPage());
   }

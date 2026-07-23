@@ -2,7 +2,6 @@ package com.miraconn.app
 
 import android.app.Application
 import android.util.Log
-import ffi.FFI
 
 class MainApplication : Application() {
     companion object {
@@ -12,6 +11,5 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "App start")
-        FFI.onAppStart(applicationContext)
     }
 }

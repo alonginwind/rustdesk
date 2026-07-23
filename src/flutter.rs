@@ -1433,7 +1433,7 @@ fn try_send_close_event(event_stream: &Option<StreamSink<EventToUI>>) {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn update_text_clipboard_required() {
     let is_required = sessions::get_sessions()
         .iter()
@@ -1451,7 +1451,7 @@ pub fn update_file_clipboard_required() {
     Client::set_is_file_clipboard_required(is_required);
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn send_clipboard_msg(msg: Message, _is_file: bool) {
     for s in sessions::get_sessions() {
         if !s.is_default() {
@@ -1486,7 +1486,7 @@ pub fn send_clipboard_msg(msg: Message, _is_file: bool) {
 }
 
 // Server Side
-#[cfg(not(any(target_os = "ios")))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod connection_manager {
     use std::collections::HashMap;
 
@@ -2294,7 +2294,7 @@ pub mod sessions {
     }
 
     #[inline]
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn has_sessions_running(conn_type: ConnType) -> bool {
         SESSIONS.read().unwrap().iter().any(|((_, r#type), s)| {
             *r#type == conn_type && s.session_handlers.read().unwrap().len() != 0
@@ -2302,7 +2302,7 @@ pub mod sessions {
     }
 
     #[inline]
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn has_connected_sessions_running(conn_type: ConnType) -> bool {
         SESSIONS.read().unwrap().iter().any(|((_, r#type), s)| {
             *r#type == conn_type

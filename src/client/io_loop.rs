@@ -1,6 +1,6 @@
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::clipboard::{update_clipboard, ClipboardSide};
-#[cfg(not(any(target_os = "ios")))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::{audio_service, clipboard::CLIPBOARD_INTERVAL, ConnInner, CLIENT_SERVER};
 use crate::{
     client::{
@@ -23,7 +23,7 @@ use crate::{clipboard::try_empty_clipboard_files, clipboard_file::unix_file_clip
 ))]
 use clipboard::ContextSend;
 use crossbeam_queue::ArrayQueue;
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::error::TryRecvError;
 use hbb_common::{
     allow_err,
@@ -370,7 +370,7 @@ impl<T: InvokeUiSession> Remote<T> {
             .unwrap()
             .set_disconnected(round);
 
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if self.handler.is_default() && _set_disconnected_ok {
             Client::try_stop_clipboard();
         }
@@ -479,7 +479,7 @@ impl<T: InvokeUiSession> Remote<T> {
             return None;
         }
         // iOS does not have this server.
-        #[cfg(not(any(target_os = "ios")))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             // NOTE:
             // The client server and --server both use the same sound input device.
@@ -544,7 +544,7 @@ impl<T: InvokeUiSession> Remote<T> {
             });
             return Some(tx);
         }
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         {
             None
         }
@@ -1388,7 +1388,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         self.check_clipboard_file_context();
                         if self.handler.is_default() {
                             #[cfg(feature = "flutter")]
-                            #[cfg(not(target_os = "ios"))]
+                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
                             let rx = Client::try_start_clipboard(None);
                             #[cfg(not(feature = "flutter"))]
                             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1403,7 +1403,7 @@ impl<T: InvokeUiSession> Remote<T> {
                                 },
                             ));
                             // To make sure current text clipboard data is updated.
-                            #[cfg(not(target_os = "ios"))]
+                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
                             if let Some(mut rx) = rx {
                                 timeout(CLIPBOARD_INTERVAL, rx.recv()).await.ok();
                             }
@@ -1428,7 +1428,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             // https://github.com/rustdesk/rustdesk/discussions/9010
 
                             #[cfg(feature = "flutter")]
-                            #[cfg(not(target_os = "ios"))]
+                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
                             crate::flutter::update_text_clipboard_required();
 
                             #[cfg(all(feature = "flutter", feature = "unix-file-copy-paste"))]
@@ -1468,7 +1468,7 @@ impl<T: InvokeUiSession> Remote<T> {
                     if clipboard_allowed {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(vec![cb], ClipboardSide::Client);
-                        #[cfg(target_os = "ios")]
+                        #[cfg(any(target_os = "android", target_os = "ios"))]
                         {
                             let content = if cb.compress {
                                 hbb_common::compress::decompress(&cb.content)
@@ -1479,8 +1479,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                 self.handler.clipboard(content);
                             }
                         }
-                        #[cfg(target_os = "android")]
-                        crate::clipboard::handle_msg_clipboard(cb);
                     }
                 }
                 Some(message::Union::MultiClipboards(_mcb)) => {
@@ -1491,7 +1489,7 @@ impl<T: InvokeUiSession> Remote<T> {
                     if clipboard_allowed {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(_mcb.clipboards, ClipboardSide::Client);
-                        #[cfg(target_os = "ios")]
+                        #[cfg(any(target_os = "android", target_os = "ios"))]
                         {
                             if let Some(cb) = _mcb
                                 .clipboards
@@ -1508,8 +1506,6 @@ impl<T: InvokeUiSession> Remote<T> {
                                 }
                             }
                         }
-                        #[cfg(target_os = "android")]
-                        crate::clipboard::handle_msg_multi_clipboards(_mcb);
                     }
                 }
                 #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
@@ -1796,7 +1792,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             Ok(Permission::Keyboard) => {
                                 *self.handler.server_keyboard_enabled.write().unwrap() = p.enabled;
                                 #[cfg(feature = "flutter")]
-                                #[cfg(not(target_os = "ios"))]
+                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
                                 crate::flutter::update_text_clipboard_required();
                                 #[cfg(all(feature = "flutter", feature = "unix-file-copy-paste"))]
                                 crate::flutter::update_file_clipboard_required();
@@ -1805,7 +1801,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             Ok(Permission::Clipboard) => {
                                 *self.handler.server_clipboard_enabled.write().unwrap() = p.enabled;
                                 #[cfg(feature = "flutter")]
-                                #[cfg(not(target_os = "ios"))]
+                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
                                 crate::flutter::update_text_clipboard_required();
                                 self.handler.set_permission("clipboard", p.enabled);
                             }
