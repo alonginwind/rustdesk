@@ -1206,10 +1206,7 @@ pub fn get_webrtc_enabled() -> bool {
 
 pub fn get_local_option(key: &str) -> String {
     let v = LocalConfig::get_option(key);
-    if key == keys::OPTION_ENABLE_UDP_PUNCH
-        || key == keys::OPTION_ENABLE_IPV6_PUNCH
-        || key == keys::OPTION_ENABLE_WEBRTC
-    {
+    if key == keys::OPTION_ENABLE_UDP_PUNCH {
         if v.is_empty() {
             if !is_public(&Config::get_rendezvous_server()) {
                 return "N".to_owned();
@@ -2309,7 +2306,13 @@ pub fn create_symmetric_key_msg(their_pk_b: [u8; 32]) -> (Bytes, Bytes, secretbo
 
 #[inline]
 pub fn using_public_server() -> bool {
-    crate::get_custom_rendezvous_server(get_option("custom-rendezvous-server")).is_empty()
+    let api = Config::get_api_server();
+    if !api.is_empty() {
+        is_public(&api)
+    }
+    else {
+        crate::get_custom_rendezvous_server(get_option("custom-rendezvous-server")).is_empty()
+    }
 }
 
 pub struct ThrottledInterval {
@@ -2547,14 +2550,18 @@ pub fn get_hwid() -> Bytes {
     Bytes::from(hasher.finalize().to_vec())
 }
 
+/// Look up a built-in option. Priority: BUILTIN_SETTINGS > CONFIG2.options / DEFAULT_SETTINGS.
 #[inline]
 pub fn get_builtin_option(key: &str) -> String {
-    config::BUILTIN_SETTINGS
+    let v = config::BUILTIN_SETTINGS
         .read()
         .unwrap()
         .get(key)
-        .cloned()
-        .unwrap_or_default()
+        .cloned();
+    if let Some(v) = v {
+        return v;
+    }
+    config::Config::get_option(key)
 }
 
 #[inline]
