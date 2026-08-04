@@ -81,6 +81,80 @@ impl InfoUploaded {
     }
 }
 
+/// 使用 keep-alive 复用 HTTP 连接池发送 POST 请求
+///
+/// `http_client` 缓存了 (heartbeat_url, Client) 对，当 URL 变化或请求失败时自动重建 Client。
+/// 复用 Client 可以避免每次请求都重建 TLS 连接，大幅减少上行带宽（省去重复的 TLS 握手开销）。
+///
+/// 如果 keep-alive 请求失败或返回 5xx，回退到原来的 `crate::post_request`，
+/// 以保证 TCP 代理回退和 TLS 重试逻辑不丢失。
+#[cfg(not(any(target_os = "ios")))]
+async fn post_with_keep_alive(
+    http_client: &mut Option<(String, reqwest::Client)>,
+    url: &str,
+    body: String,
+) -> hbb_common::ResultType<String> {
+    // 取 heartbeat URL 的 base（scheme://host:port）作为缓存 key
+    let base = get_url_base(url);
+    let need_create = match http_client {
+        Some((cached_base, _)) => cached_base != &base,
+        None => true,
+    };
+    if need_create {
+        let client = crate::hbbs_http::http_client::create_http_client_async_with_url(url).await;
+        *http_client = Some((base, client));
+    }
+    let client = &http_client.as_ref().unwrap().1;
+    match client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .body(body.clone())
+        .timeout(Duration::from_secs(12))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let text = resp.text().await?;
+            // 5xx 时回退到原始 post_request，以保证 TCP 代理回退逻辑不丢失
+            if status >= 500 {
+                log::warn!(
+                    "keep-alive request got {} for {}, fallback to post_request",
+                    status,
+                    url
+                );
+                *http_client = None;
+                return crate::post_request(url.to_string(), body, "").await;
+            }
+            Ok(text)
+        }
+        Err(e) => {
+            // 请求失败，清除 Client 以便下次重建
+            *http_client = None;
+            // 回退到原始 post_request，保证 TLS 重试和 TCP 代理逻辑不丢失
+            log::warn!(
+                "keep-alive request failed for {}: {:?}, fallback to post_request",
+                url,
+                e
+            );
+            crate::post_request(url.to_string(), body, "").await
+        }
+    }
+}
+
+/// 从完整 URL 中提取 base（scheme://host:port）
+#[cfg(not(any(target_os = "ios")))]
+fn get_url_base(url: &str) -> String {
+    // 简单提取 scheme://host:port
+    if let Some(idx) = url.find("://") {
+        let after_scheme = &url[idx + 3..];
+        let end = after_scheme.find('/').unwrap_or(after_scheme.len());
+        format!("{}://{}", &url[..idx + 3], &after_scheme[..end])
+    } else {
+        url.to_string()
+    }
+}
+
 #[cfg(not(any(target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 async fn start_hbbs_sync_async() {
@@ -91,6 +165,9 @@ async fn start_hbbs_sync_async() {
     let mut last_sent: Option<Instant> = None;
     let mut info_uploaded = InfoUploaded::default();
     let mut sysinfo_ver = "".to_owned();
+    // 复用 HTTP 连接池，避免每次 heartbeat 都重建 TLS 连接
+    // 当 URL 变化或请求失败时自动重建
+    let mut http_client: Option<(String, reqwest::Client)> = None;
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -98,6 +175,7 @@ async fn start_hbbs_sync_async() {
                 let id = Config::get_id();
                 if url.is_empty() {
                     *PRO.lock().unwrap() = false;
+                    http_client = None;
                     continue;
                 }
                 if config::option2bool("stop-service", &Config::get_option("stop-service")) {
@@ -189,7 +267,7 @@ async fn start_hbbs_sync_async() {
                         let ver = config::Status::get("sysinfo_ver"); // sysinfo_ver is the version of sysinfo on server's side
                         if hash == old_hash {
                             // When the api doesn't exist, Ok("") will be returned in test.
-                            let samever = match crate::post_request(url.replace("heartbeat", "sysinfo_ver"), "".to_owned(), "").await {
+                            let samever = match post_with_keep_alive(&mut http_client, &url.replace("heartbeat", "sysinfo_ver"), "".to_owned()).await {
                                 Ok(x)  => {
                                     sysinfo_ver = x.clone();
                                     *PRO.lock().unwrap() = true;
@@ -207,7 +285,7 @@ async fn start_hbbs_sync_async() {
                             }
                         }
                     }
-                    match crate::post_request(url.replace("heartbeat", "sysinfo"), v, "").await {
+                    match post_with_keep_alive(&mut http_client, &url.replace("heartbeat", "sysinfo"), v).await {
                         Ok(x)  => {
                             if x == "SYSINFO_UPDATED" {
                                 info_uploaded = InfoUploaded::uploaded(url.clone(), id.clone(), sys_username);
@@ -241,7 +319,7 @@ async fn start_hbbs_sync_async() {
                 }
                 let modified_at = LocalConfig::get_option("strategy_timestamp").parse::<i64>().unwrap_or(0);
                 v["modified_at"] = json!(modified_at);
-                if let Ok(s) = crate::post_request(url.clone(), v.to_string(), "").await {
+                if let Ok(s) = post_with_keep_alive(&mut http_client, &url, v.to_string()).await {
                     if let Ok(mut rsp) = serde_json::from_str::<HashMap::<&str, Value>>(&s) {
                         if rsp.remove("sysinfo").is_some() {
                             info_uploaded.uploaded = false;
