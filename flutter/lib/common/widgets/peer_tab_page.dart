@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:bot_toast/bot_toast.dart';
@@ -693,6 +694,13 @@ class PeerSearchBar extends StatefulWidget {
 
 class _PeerSearchBarState extends State<PeerSearchBar> {
   var drawer = false;
+  Timer? _searchDebounceTimer;
+
+  @override
+  void dispose() {
+    _searchDebounceTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -742,7 +750,11 @@ class _PeerSearchBarState extends State<PeerSearchBar> {
                         autofocus: true,
                         controller: peerSearchTextController,
                         onChanged: (searchText) {
-                          peerSearchText.value = searchText;
+                          _searchDebounceTimer?.cancel();
+                          _searchDebounceTimer = Timer(
+                            const Duration(milliseconds: 200),
+                            () => peerSearchText.value = searchText,
+                          );
                         },
                         focusNode: focusNode,
                         textAlign: TextAlign.start,
@@ -773,6 +785,7 @@ class _PeerSearchBarState extends State<PeerSearchBar> {
                       padding: const EdgeInsets.only(right: 2),
                       onPressed: () {
                         setState(() {
+                          _searchDebounceTimer?.cancel();
                           peerSearchTextController.clear();
                           peerSearchText.value = "";
                           drawer = false;
