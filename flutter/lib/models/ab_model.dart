@@ -75,6 +75,9 @@ class AbModel {
 
   late final Peers peersModel;
 
+  // 全局搜索时，保存搜索结果的 peers，用于更新在线状态
+  List<Peer> searchResultPeers = [];
+
   WeakReference<FFI> parent;
 
   AbModel(this.parent) {
@@ -83,6 +86,13 @@ class AbModel {
         name: PeersModelName.addressBook,
         getInitPeers: () => currentAbPeers,
         loadEvent: LoadEvent.addressBook);
+    // 注册全局事件处理器，更新搜索结果的 peers 的在线状态
+    // 因为 peersModel 的 _updateOnlineState 只更新当前地址簿的 peers
+    // 全局搜索时需要更新搜索结果的 peers 的在线状态
+    platformFFI.registerEventHandler(
+        'callback_query_onlines', 'addressBookSearchResult', (evt) async {
+      _updateSearchResultOnlineState(evt);
+    });
     if (desktopType == DesktopType.main) {
       Timer.periodic(Duration(milliseconds: 500), (timer) async {
         if (_timerCounter++ % 6 == 0) {
@@ -101,6 +111,8 @@ class AbModel {
     _currentName.value = '';
     _listPullError.value = '';
     _pulledOnce = false;
+    _preloadFuture = null;
+    searchResultPeers = [];
     await bind.mainClearAb();
     listInitialized = false;
   }
@@ -117,6 +129,7 @@ class AbModel {
   /// If `force` is `ForcePullAb.current`, the function will only pull the current address book.
   /// If `quiet` is true, the function will not display any notifications or errors.
   var _pulling = false;
+  Future<void>? _preloadFuture;
   Future<void> pullAb(
       {required ForcePullAb? force, required bool quiet}) async {
     if (bind.isDisableAb()) return;
@@ -134,9 +147,28 @@ class AbModel {
     try {
       await _pullAb(force: force, quiet: quiet);
       _refreshTab();
+      // 后台预加载所有地址簿的 peers，用于全局搜索
+      _preloadAllAddressBooks();
     } catch (_) {}
     _pulling = false;
     _pulledOnce = true;
+  }
+
+  /// 后台预加载所有地址簿的 peers，用于全局搜索
+  void _preloadAllAddressBooks() {
+    if (_preloadFuture != null) return;
+    _preloadFuture = _doPreloadAllAddressBooks();
+  }
+
+  Future<void> _doPreloadAllAddressBooks() async {
+    final abs = addressbooks.values.toList();
+    for (var ab in abs) {
+      if (!ab.initialized) {
+        try {
+          await ab.pullAb(quiet: true);
+        } catch (_) {}
+      }
+    }
   }
 
   Future<void> _pullAb(
@@ -816,6 +848,67 @@ class AbModel {
       v.addAll(value.peers.map((e) => Peer.copy(e)).toList());
     });
     return v;
+  }
+
+  /// 加载所有地址簿的 peers 并返回（用于全局搜索）
+  /// 如果正在预加载，等待预加载完成
+  /// 加载未初始化的地址簿（包括新增的地址簿）
+  /// 返回原始引用而非副本，确保在线状态查询的回调更新能直接反映
+  Future<List<Peer>> loadAllPeers() async {
+    // 如果正在预加载，等待预加载完成
+    if (_preloadFuture != null) {
+      await _preloadFuture;
+    }
+    // 加载所有未初始化的地址簿（包括新增的地址簿）
+    // 先转为列表，避免 await 期间 addressbooks 被修改导致 ConcurrentModificationError
+    final abs = addressbooks.values.toList();
+    for (var ab in abs) {
+      if (!ab.initialized) {
+        try {
+          await ab.pullAb(quiet: true);
+        } catch (_) {}
+      }
+    }
+    // 返回原始引用，这样在线状态查询的回调更新会直接反映在搜索结果中
+    List<Peer> v = [];
+    for (var value in addressbooks.values) {
+      v.addAll(value.peers);
+    }
+    return v;
+  }
+
+  /// 更新搜索结果的 peers 的在线状态
+  /// 因为 peersModel 的 _updateOnlineState 只更新当前地址簿的 peers
+  /// 全局搜索时需要更新搜索结果的 peers 的在线状态
+  void _updateSearchResultOnlineState(Map<String, dynamic> evt) {
+    if (searchResultPeers.isEmpty) return;
+
+    int changedCount = 0;
+    final onlines = evt['onlines']?.toString() ?? '';
+    final offlines = evt['offlines']?.toString() ?? '';
+    final onlineList = onlines.split(',');
+    final offlineList = offlines.split(',');
+
+    // 只更新搜索结果中的 peers
+    for (var peer in searchResultPeers) {
+      if (onlineList.contains(peer.id)) {
+        if (!peer.online) {
+          peer.online = true;
+          changedCount++;
+        }
+      }
+      if (offlineList.contains(peer.id)) {
+        if (peer.online) {
+          peer.online = false;
+          changedCount++;
+        }
+      }
+    }
+
+    // 如果有状态变化，通知 UI 更新
+    if (changedCount > 0) {
+      peersModel.notifyListeners();
+    }
   }
 
   String translatedName(String name) {

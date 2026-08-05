@@ -360,8 +360,30 @@ class _PeersViewState extends State<_PeersView>
 
   Future<List<Peer>>? matchPeers(
       String searchText, String sortedBy, List<Peer> peers) async {
-    if (widget.peerFilter != null) {
+    // 全局搜索时（搜索文本不为空且是地址簿 tab），搜索所有地址簿的 peers
+    // 需要先加载未初始化的地址簿，确保搜索结果完整
+    final isGlobalSearch = searchText.trim().isNotEmpty &&
+        widget.peerTabIndex == PeerTabIndex.ab;
+    if (isGlobalSearch) {
+      peers = await gFFI.abModel.loadAllPeers();
+    }
+
+    // 全局搜索时跳过 tag 过滤，因为不同地址簿的 tags 不同
+    if (widget.peerFilter != null && !isGlobalSearch) {
       peers = peers.where((peer) => widget.peerFilter!(peer)).toList();
+    }
+
+    // 全局搜索时按 ID 去重，避免同一设备在多个地址簿中重复显示
+    if (isGlobalSearch) {
+      final seenIds = <String>{};
+      peers = peers.where((peer) {
+        final id = peer.getId();
+        if (seenIds.contains(id)) {
+          return false;
+        }
+        seenIds.add(id);
+        return true;
+      }).toList();
     }
 
     // fallback to id sorting
@@ -394,6 +416,8 @@ class _PeersViewState extends State<_PeersView>
 
     searchText = searchText.trim();
     if (searchText.isEmpty) {
+      // 搜索框为空时，清空搜索结果
+      gFFI.abModel.searchResultPeers = [];
       return peers;
     }
     searchText = searchText.toLowerCase();
@@ -404,6 +428,11 @@ class _PeersViewState extends State<_PeersView>
       if (matches[i]) {
         filteredList.add(peers[i]);
       }
+    }
+
+    // 全局搜索时，保存搜索结果的 peers，用于更新在线状态
+    if (isGlobalSearch) {
+      gFFI.abModel.searchResultPeers = filteredList;
     }
 
     return filteredList;
