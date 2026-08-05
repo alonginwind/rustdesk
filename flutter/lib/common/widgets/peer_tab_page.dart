@@ -714,6 +714,10 @@ class _PeerSearchBarState extends State<PeerSearchBar> {
                         autofocus: true,
                         controller: peerSearchTextController,
                         onChanged: (searchText) {
+                          // 如果输入法正在组合中（选候选词），等待组合结束
+                          if (peerSearchTextController.value.composing.isValid) {
+                            return;
+                          }
                           peerSearchText.value = searchText;
                         },
                         focusNode: focusNode,
