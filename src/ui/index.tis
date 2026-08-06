@@ -36,6 +36,7 @@ var using_public_server = handler.using_public_server();
 var software_update_url = "";
 var key_confirmed = tmp[1];
 var system_error = "";
+var ab_info = ""; // 地址簿信息
 
 const default_option_lang = is_custom_client ? 'default' : '';
 const default_option_yes = is_custom_client ? 'Y' : '';
@@ -83,6 +84,11 @@ class ConnectStatus: Reactor.Component {
             return translate('not_ready_status');
         } else if (connect_status == 0) {
             return translate('connecting_status');
+        }
+        // 服务就绪后，显示地址簿信息
+        if (ab_info != "") {
+            var abInfo = <span style="background-color: rgba(0, 122, 255, 0.1); color: #007AFF; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-left: 8px;">{ab_info}</span>;
+            if (!handler.using_public_server()) return <span>{translate('Ready')}&nbsp;&nbsp;&nbsp;{abInfo}</span>;
         }
         if (!handler.using_public_server()) return translate('Ready');
         return <span>{translate("Ready")}, <span .link #setup-server>{translate("setup_server_tip")}</span></span>;
@@ -1460,6 +1466,21 @@ function checkConnectStatus() {
         if (tmp != disable_udp) {
             disable_udp = tmp;
             app.update();
+        }
+        // 检查地址簿信息变化
+        var abName = handler.get_option("preset-address-book-name");
+        var abAlias = handler.get_option("preset-address-book-alias");
+        var newAbInfo = "";
+        if (abName != "" && abAlias != "") {
+            newAbInfo = abName + " - " + abAlias;
+        } else if (abName != "") {
+            newAbInfo = abName;
+        } else if (abAlias != "") {
+            newAbInfo = abAlias;
+        }
+        if (newAbInfo != ab_info) {
+            ab_info = newAbInfo;
+            app.connect_status.update();
         }
         check_if_overlay();
         checkConnectStatus();    
