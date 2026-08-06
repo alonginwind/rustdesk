@@ -35,6 +35,7 @@ class OnlineStatusWidget extends StatefulWidget {
 class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   final _svcStopped = Get.find<RxBool>(tag: 'stop-service');
   final _svcIsUsingPublicServer = true.obs;
+  final _abInfo = ''.obs; // 地址簿信息（响应式）
   Timer? _updateTimer;
 
   double get em => 14.0;
@@ -129,6 +130,9 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               width: isIncomingOnly ? 226 : null,
               child: _buildConnStatusMsg(),
             ),
+            // 服务就绪后显示地址簿信息
+            if (stateGlobal.svcStatus.value == SvcStatus.ready)
+              _buildAddressBookInfo(),
             // stop
             if (!isIncomingOnly) startServiceWidget(),
             // ready && public
@@ -167,6 +171,36 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
     );
   }
 
+  /// 构建地址簿信息显示组件
+  Widget _buildAddressBookInfo() {
+    return Obx(() {
+      if (_abInfo.value.isEmpty) {
+        return SizedBox.shrink();
+      }
+      return Tooltip(
+        message: _abInfo.value,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            _abInfo.value,
+            style: TextStyle(
+              fontSize: em - 1,
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w500,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      );
+    });
+  }
+
   updateStatus() async {
     final status =
         jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
@@ -181,6 +215,11 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
       stateGlobal.svcStatus.value = SvcStatus.notReady;
     }
     _svcIsUsingPublicServer.value = await bind.mainIsUsingPublicServer();
+    // 更新地址簿信息（响应式）
+    final abName = bind.mainGetOptionSync(key: 'preset-address-book-name');
+    final abAlias = bind.mainGetOptionSync(key: 'preset-address-book-alias');
+    final parts = [if (abName.isNotEmpty) abName, if (abAlias.isNotEmpty) abAlias];
+    _abInfo.value = parts.join(' - ');
     try {
       stateGlobal.videoConnCount.value = status['video_conn_count'] as int;
     } catch (_) {}
