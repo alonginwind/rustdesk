@@ -413,12 +413,16 @@ class PasswordComponent: Reactor.Component {
 
 // type: #post, #get, #delete, #put
 function httpRequest(url, type, params, _onSuccess, _onError, headers="") {
-    if (type != #post) {
-        stderr.println("only post ok");
+    var isGet = (type == #get);
+    if (isGet) {
+        handler.get_request(url, headers);
+    } else {
+        handler.post_request(url, JSON.stringify(params), headers);
     }
-    handler.post_request(url, JSON.stringify(params), headers);
+    
     function check_status() {
-        var status = handler.get_async_job_status();
+        // GET 请求使用 get_http_status，POST 请求使用 get_async_job_status
+        var status = isGet ? handler.get_http_status(url) : handler.get_async_job_status();
         if (status == " ") self.timer(0.1s, check_status);
         else {
             try {
