@@ -14,6 +14,7 @@ import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
+import '../../utils/http_service.dart' as http;
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
@@ -398,12 +399,15 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           Column(
             children: [
               if (!isOutgoingOnly)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    translate("Your Desktop"),
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      translate("Your Desktop"),
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    _buildBindDeviceButton(context),
+                  ],
                 ),
             ],
           ),
@@ -425,6 +429,162 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         ],
       ),
     );
+  }
+
+  /// Build bind device button
+  Widget _buildBindDeviceButton(BuildContext context) {
+    return InkWell(
+      onTap: () => _showBindDeviceDialog(context),
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        child: Icon(
+          Icons.link,
+          size: 20,
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.7),
+        ),
+      ),
+    );
+  }
+
+  /// Show bind device dialog
+  void _showBindDeviceDialog(BuildContext context) {
+    final abAliasController = TextEditingController(
+      text: bind.mainGetOptionSync(key: 'preset-address-book-alias'),
+    );
+    final deviceNameController = TextEditingController(
+      text: bind.mainGetOptionSync(key: 'preset-device-name'),
+    );
+    String selectedAbName = bind.mainGetOptionSync(key: 'preset-address-book-name');
+    String? abError;
+    String? aliasError;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text('设备绑定'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FutureBuilder<List<String>>(
+                future: _fetchAddressBookNames(),
+                builder: (ctx, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return SizedBox(
+                      height: 50,
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return Text('Error: ${snapshot.error}');
+                  }
+                  final abNames = snapshot.data ?? [];
+                  return DropdownButtonFormField<String>(
+                    value: selectedAbName.isNotEmpty && abNames.contains(selectedAbName)
+                        ? selectedAbName
+                        : '',
+                    decoration: InputDecoration(
+                      labelText: '* 地址簿',
+                      errorText: abError,
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: '',
+                        child: Text('-- 请选择 --'),
+                      ),
+                      ...abNames.map((name) {
+                        return DropdownMenuItem<String>(
+                          value: name,
+                          child: Text(name),
+                        );
+                      }),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        selectedAbName = value ?? '';
+                        abError = null;
+                      });
+                    },
+                  );
+                },
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: abAliasController,
+                decoration: InputDecoration(
+                  labelText: '* 别名',
+                  hintText: '请输入别名',
+                  errorText: aliasError,
+                ),
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: deviceNameController,
+                decoration: InputDecoration(
+                  labelText: '设备名称',
+                  hintText: '请输入设备名称',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(translate('Cancel')),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                bool hasError = false;
+                if (selectedAbName.isEmpty) {
+                  setState(() => abError = '请选择地址簿');
+                  hasError = true;
+                }
+                if (abAliasController.text.trim().isEmpty) {
+                  setState(() => aliasError = '请输入别名');
+                  hasError = true;
+                }
+                if (hasError) return;
+                bind.mainSetOption(
+                  key: 'preset-address-book-name',
+                  value: selectedAbName,
+                );
+                bind.mainSetOption(
+                  key: 'preset-address-book-alias',
+                  value: abAliasController.text.trim(),
+                );
+                bind.mainSetOption(
+                  key: 'preset-device-name',
+                  value: deviceNameController.text.trim(),
+                );
+                Navigator.pop(ctx);
+              },
+              child: Text(translate('OK')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Fetch address book names from API
+  Future<List<String>> _fetchAddressBookNames() async {
+    try {
+      final api = '${await bind.mainGetApiServer()}/api/admin/my/address_book_collection/list_shared?page=1&page_size=9999';
+      final resp = await http.get(Uri.parse(api));
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body);
+        final data = json['data'];
+        if (data != null) {
+          final list = data['list'] as List?;
+          if (list != null) {
+            return list.map((item) => item['name'] as String).toList();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch address book names: $e');
+    }
+    return [];
   }
 
   Widget buildHelpCards(String updateUrl) {
