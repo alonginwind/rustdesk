@@ -619,6 +619,11 @@ impl UI {
         post_request(url, body, header)
     }
 
+    fn get_request(&self, url: String, header: String) {
+        let header = if header.is_empty() { "{}".to_owned() } else { header };
+        http_request(url, "GET".to_owned(), None, header)
+    }
+
     fn is_ok_change_id(&self) -> bool {
         hbb_common::machine_uid::get().is_ok()
     }
@@ -627,8 +632,8 @@ impl UI {
         get_async_job_status()
     }
 
-    fn get_http_status(&self, url: String) -> Option<String> {
-        get_async_http_status(url)
+    fn get_http_status(&self, url: String) -> String {
+        get_async_http_status(url).unwrap_or_default()
     }
 
     fn t(&self, name: String) -> String {
@@ -801,6 +806,8 @@ impl sciter::EventHandler for UI {
         fn change_id(String);
         fn get_async_job_status();
         fn post_request(String, String, String);
+        fn get_request(String, String);
+        fn get_http_status(String);
         fn is_ok_change_id();
         fn create_shortcut(String);
         fn discover();
