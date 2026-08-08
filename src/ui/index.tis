@@ -103,6 +103,81 @@ class ConnectStatus: Reactor.Component {
     }
 }
 
+// 地址簿列表
+var abNameList = [];
+var gSelectedAbName = "";
+
+// 获取地址簿列表并显示对话框
+function showBindDeviceDialog() {
+    var oldAbName = handler.get_option("preset-address-book-name");
+    var oldAbAlias = handler.get_option("preset-address-book-alias");
+    var oldDeviceName = handler.get_option("preset-device-name");
+    
+    var url = handler.get_api_server() + "/api/admin/my/address_book_collection/list_shared?page=1&page_size=9999";
+    httpRequest(url, #get, {}, function(data) {
+        abNameList = [];
+        // 响应数据在 body 字段中，需要再次解析
+        var actualData = data;
+        if (data && data.body) {
+            try {
+                actualData = JSON.parse(data.body);
+            } catch (e) {}
+        }
+        if (actualData && actualData.data && actualData.data.list) {
+            for (var i = 0; i < actualData.data.list.length; i++) {
+                abNameList.push(actualData.data.list[i].name);
+            }
+        }
+        // 数据加载完成后显示对话框
+        showBindDeviceDialogInternal(oldAbName, oldAbAlias, oldDeviceName);
+    }, function(err) {
+        // 即使失败也显示对话框
+        showBindDeviceDialogInternal(oldAbName, oldAbAlias, oldDeviceName);
+    });
+}
+
+// 内部函数：显示对话框
+function showBindDeviceDialogInternal(oldAbName, oldAbAlias, oldDeviceName) {
+    // 构建下拉框选项
+    var optionsHtml = "<option value=''>-- 请选择 --</option>";
+    for (var i = 0; i < abNameList.length; i++) {
+        var selected = (abNameList[i] == oldAbName) ? " selected" : "";
+        optionsHtml += "<option value='" + abNameList[i] + "'" + selected + ">" + abNameList[i] + "</option>";
+    }
+    
+    // 用全局变量保存选中的地址簿
+    gSelectedAbName = oldAbName;
+    
+    var html = "<div .form .set-password> \
+        <div><span>* 地址簿: </span><select|dropdown #ab-select style='width: 200px;'>" + optionsHtml + "</select></div> \
+        <div><span>* 别名: </span><input|text .outline-focus name='ab-alias' value='" + oldAbAlias + "' /></div> \
+        <div><span>设备名称: </span><input|text name='device-name' value='" + oldDeviceName + "' /></div> \
+        </div>";
+    
+    msgbox("custom-bind-device", "绑定设备", html, "", function(res=null) {
+            if (!res) return;
+            var abName = gSelectedAbName.trim();
+            var abAlias = (res["ab-alias"] || "").trim();
+            var deviceName = (res["device-name"] || "").trim();
+            if (!abName) return "请选择地址簿";
+            if (!abAlias) return "请输入别名";
+            handler.set_option("preset-address-book-name", abName);
+            handler.set_option("preset-address-book-alias", abAlias);
+            handler.set_option("preset-device-name", deviceName);
+            app.update();
+        }, msgbox_default_height, get_msgbox_width()
+    );
+}
+
+// select 变化事件处理
+event change $(#ab-select) () {
+    gSelectedAbName = this.value;
+}
+
+event click $(#bind-device) () {
+    showBindDeviceDialog();
+}
+
 function createNewConnect(id, type) {
     id = id.replace(/\s/g, "");
     app.remote_id.value = formatId(id);
@@ -724,6 +799,7 @@ class App: Reactor.Component
                         <div .title style="flow:horizontal; position:relative; height:1.6em; line-height:1.6em">
                             <span>{translate('Your Desktop')}</span>
                             {outgoing_only ? <span .link #open-settings style="position:absolute; right:0; bottom:0; transform:scale(0.6); transform-origin:right bottom; opacity:0.85">{svg_menu}</span> : ""}
+                            <span .link #bind-device style="position:absolute; right:0; top:0; padding:4px;"><svg style="width:18px; height:18px;" viewBox="0 0 24 24" fill="none" stroke="#007AFF" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
                         </div>
                         <div .lighter-text>{outgoing_only ? translate('outgoing_only_desk_tip') : translate('desk_tip')}</div>
                         {outgoing_only ? <div style="position:absolute; left:-10000px; top:-10000px; width:0; height:0; overflow:hidden"><MyIdMenu /></div> : ""}
