@@ -164,7 +164,6 @@ async fn start_hbbs_sync_async() {
     ));
     let mut last_sent: Option<Instant> = None;
     let mut info_uploaded = InfoUploaded::default();
-    let mut sysinfo_ver = "".to_owned();
     // 复用 HTTP 连接池，避免每次 heartbeat 都重建 TLS 连接
     // 当 URL 变化或请求失败时自动重建
     let mut http_client: Option<(String, reqwest::Client)> = None;
@@ -202,89 +201,72 @@ async fn start_hbbs_sync_async() {
                 // we may not be able to get the username before login after the next restart.
                 let mut v = crate::get_sysinfo();
                 let sys_username = v["username"].as_str().unwrap_or_default().to_string();
-                // Though the username comparison is only necessary on Windows,
-                // we still keep the comparison on other platforms for consistency.
-                let need_upload = (!info_uploaded.uploaded || info_uploaded.username.as_ref() != Some(&sys_username)) &&
+                v["version"] = json!(crate::VERSION);
+                v["id"] = json!(id);
+                v["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
+                let ab_name = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_NAME);
+                if !ab_name.is_empty() {
+                    v[keys::OPTION_PRESET_ADDRESS_BOOK_NAME] = json!(ab_name);
+                }
+                let ab_tag = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_TAG);
+                if !ab_tag.is_empty() {
+                    v[keys::OPTION_PRESET_ADDRESS_BOOK_TAG] = json!(ab_tag);
+                }
+                let ab_alias = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_ALIAS);
+                if !ab_alias.is_empty() {
+                    v[keys::OPTION_PRESET_ADDRESS_BOOK_ALIAS] = json!(ab_alias);
+                }
+                let ab_password = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_PASSWORD);
+                if !ab_password.is_empty() {
+                    v[keys::OPTION_PRESET_ADDRESS_BOOK_PASSWORD] = json!(ab_password);
+                }
+                let ab_note = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_NOTE);
+                if !ab_note.is_empty() {
+                    v[keys::OPTION_PRESET_ADDRESS_BOOK_NOTE] = json!(ab_note);
+                }
+                let username = get_builtin_option(keys::OPTION_PRESET_USERNAME);
+                if !username.is_empty() {
+                    v[keys::OPTION_PRESET_USERNAME] = json!(username);
+                }
+                let strategy_name = get_builtin_option(keys::OPTION_PRESET_STRATEGY_NAME);
+                if !strategy_name.is_empty() {
+                    v[keys::OPTION_PRESET_STRATEGY_NAME] = json!(strategy_name);
+                }
+                let device_group_name = get_builtin_option(keys::OPTION_PRESET_DEVICE_GROUP_NAME);
+                if !device_group_name.is_empty() {
+                    v[keys::OPTION_PRESET_DEVICE_GROUP_NAME] = json!(device_group_name);
+                }
+                let device_username = Config::get_option(keys::OPTION_PRESET_DEVICE_USERNAME);
+                if !device_username.is_empty() {
+                    v["username"] = json!(device_username);
+                }
+                let device_name = Config::get_option(keys::OPTION_PRESET_DEVICE_NAME);
+                if !device_name.is_empty() {
+                    v["hostname"] = json!(device_name);
+                }
+                let note = Config::get_option(keys::OPTION_PRESET_NOTE);
+                if !note.is_empty() {
+                    v[keys::OPTION_PRESET_NOTE] = json!(note);
+                }
+                let v = v.to_string();
+                let hash = {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(url.as_bytes());
+                    // Remove "cpu" field from hash computation as cpu frequency is dynamic
+                    if let Ok(mut v_for_hash) = serde_json::from_str::<serde_json::Value>(&v) {
+                        v_for_hash.as_object_mut().map(|o| o.remove("cpu"));
+                        hasher.update(v_for_hash.to_string().as_bytes());
+                    } else {
+                        hasher.update(v.as_bytes());
+                    }
+                    let res = hasher.finalize();
+                    hbb_common::base64::encode(&res[..])
+                };
+                let old_hash = config::Status::get("sysinfo_hash");
+                let need_upload = (hash != old_hash || !info_uploaded.uploaded) &&
                     info_uploaded.last_uploaded.map(|x| x.elapsed() >= UPLOAD_SYSINFO_TIMEOUT).unwrap_or(true);
                 if need_upload {
-                    v["version"] = json!(crate::VERSION);
-                    v["id"] = json!(id);
-                    v["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
-                    let ab_name = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_NAME);
-                    if !ab_name.is_empty() {
-                        v[keys::OPTION_PRESET_ADDRESS_BOOK_NAME] = json!(ab_name);
-                    }
-                    let ab_tag = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_TAG);
-                    if !ab_tag.is_empty() {
-                        v[keys::OPTION_PRESET_ADDRESS_BOOK_TAG] = json!(ab_tag);
-                    }
-                    let ab_alias = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_ALIAS);
-                    if !ab_alias.is_empty() {
-                        v[keys::OPTION_PRESET_ADDRESS_BOOK_ALIAS] = json!(ab_alias);
-                    }
-                    let ab_password = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_PASSWORD);
-                    if !ab_password.is_empty() {
-                        v[keys::OPTION_PRESET_ADDRESS_BOOK_PASSWORD] = json!(ab_password);
-                    }
-                    let ab_note = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_NOTE);
-                    if !ab_note.is_empty() {
-                        v[keys::OPTION_PRESET_ADDRESS_BOOK_NOTE] = json!(ab_note);
-                    }
-                    let username = get_builtin_option(keys::OPTION_PRESET_USERNAME);
-                    if !username.is_empty() {
-                        v[keys::OPTION_PRESET_USERNAME] = json!(username);
-                    }
-                    let strategy_name = get_builtin_option(keys::OPTION_PRESET_STRATEGY_NAME);
-                    if !strategy_name.is_empty() {
-                        v[keys::OPTION_PRESET_STRATEGY_NAME] = json!(strategy_name);
-                    }
-                    let device_group_name = get_builtin_option(keys::OPTION_PRESET_DEVICE_GROUP_NAME);
-                    if !device_group_name.is_empty() {
-                        v[keys::OPTION_PRESET_DEVICE_GROUP_NAME] = json!(device_group_name);
-                    }
-                    let device_username = Config::get_option(keys::OPTION_PRESET_DEVICE_USERNAME);
-                    if !device_username.is_empty() {
-                        v["username"] = json!(device_username);
-                    }
-                    let device_name = Config::get_option(keys::OPTION_PRESET_DEVICE_NAME);
-                    if !device_name.is_empty() {
-                        v["hostname"] = json!(device_name);
-                    }
-                    let note = Config::get_option(keys::OPTION_PRESET_NOTE);
-                    if !note.is_empty() {
-                        v[keys::OPTION_PRESET_NOTE] = json!(note);
-                    }
-                    let v = v.to_string();
-                    let mut hash = "".to_owned();
-                    if crate::is_public(&url) {
-                        use sha2::{Digest, Sha256};
-                        let mut hasher = Sha256::new();
-                        hasher.update(url.as_bytes());
-                        hasher.update(&v.as_bytes());
-                        let res = hasher.finalize();
-                        hash = hbb_common::base64::encode(&res[..]);
-                        let old_hash = config::Status::get("sysinfo_hash");
-                        let ver = config::Status::get("sysinfo_ver"); // sysinfo_ver is the version of sysinfo on server's side
-                        if hash == old_hash {
-                            // When the api doesn't exist, Ok("") will be returned in test.
-                            let samever = match post_with_keep_alive(&mut http_client, &url.replace("heartbeat", "sysinfo_ver"), "".to_owned()).await {
-                                Ok(x)  => {
-                                    sysinfo_ver = x.clone();
-                                    *PRO.lock().unwrap() = true;
-                                    x == ver
-                                }
-                                _ => {
-                                    false // to make sure Pro can be assigned in below post for old
-                                            // hbbs pro not supporting sysinfo_ver, use false for ensuring
-                                }
-                            };
-                            if samever {
-                                info_uploaded = InfoUploaded::uploaded(url.clone(), id.clone(), sys_username);
-                                log::info!("sysinfo not changed, skip upload");
-                                continue;
-                            }
-                        }
-                    }
                     match post_with_keep_alive(&mut http_client, &url.replace("heartbeat", "sysinfo"), v).await {
                         Ok(x)  => {
                             if x == "SYSINFO_UPDATED" {
@@ -292,7 +274,6 @@ async fn start_hbbs_sync_async() {
                                 log::info!("sysinfo updated");
                                 if !hash.is_empty() {
                                     config::Status::set("sysinfo_hash", hash);
-                                    config::Status::set("sysinfo_ver", sysinfo_ver.clone());
                                 }
                                 *PRO.lock().unwrap() = true;
                             } else if x == "ID_NOT_FOUND" {
