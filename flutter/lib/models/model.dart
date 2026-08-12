@@ -54,6 +54,9 @@ typedef ReconnectHandle = Function(OverlayDialogManager, SessionID, bool);
 final _constSessionId = Uuid().v4obj();
 // Empirical restart reconnect cadence: keep the last frame briefly and retry quickly.
 const _restartReconnectSilentDelaySecs = 5;
+// Auto-retry delay for relay-hint (Connection reset by peer) dialogs: give the
+// user time to react, but don't strand them on a transient network blip.
+const _relayHintReconnectDelaySecs = 8;
 
 class CachedPeerData {
   Map<String, dynamic> updatePrivacyMode = {};
@@ -122,6 +125,7 @@ class FfiModel with ChangeNotifier {
   late VirtualMouseMode virtualMouseMode;
   Timer? _timer;
   Timer? _restartReconnectDelayTimer;
+  Timer? _relayHintReconnectDelayTimer;
   var _reconnects = 1;
   DateTime? _offlineReconnectStartTime;
   bool _androidDocumentPickerActive = false;
@@ -959,6 +963,20 @@ class FfiModel with ChangeNotifier {
       showElevationError(sessionId, type, title, text, dialogManager);
     } else if (type == 'relay-hint' || type == 'relay-hint2') {
       showRelayHintDialog(sessionId, type, title, text, dialogManager, peerId);
+      // Schedule an 8s auto-retry so a transient Connection reset doesn't strand
+      // the user. The user can still cancel by manually retrying or closing the
+      // dialog before the timer fires.
+      if (_relayHintReconnectDelayTimer == null) {
+        final useRelay = type == 'relay-hint2';
+        _relayHintReconnectDelayTimer =
+            Timer(Duration(seconds: _relayHintReconnectDelaySecs), () {
+          _relayHintReconnectDelayTimer = null;
+          if (parent.target?.closed == true) {
+            return;
+          }
+          reconnect(dialogManager, sessionId, useRelay);
+        });
+      }
     } else if (text == kMsgboxTextWaitingForImage) {
       showConnectedWaitingForImage(dialogManager, sessionId, type, title, text);
     } else if (title == 'Privacy mode') {
@@ -966,17 +984,15 @@ class FfiModel with ChangeNotifier {
       showPrivacyFailedDialog(
           sessionId, type, title, text, link, hasRetry, dialogManager);
     } else {
-      var hasRetry = evt['hasRetry'] == 'true';
-      if (!hasRetry) {
-        hasRetry = shouldAutoRetryOnOffline(type, title, text);
-      }
-      showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
+      showMsgBox(sessionId, type, title, text, link, true, dialogManager);
     }
   }
 
   void resetRestartReconnectState() {
     _restartReconnectDelayTimer?.cancel();
     _restartReconnectDelayTimer = null;
+    _relayHintReconnectDelayTimer?.cancel();
+    _relayHintReconnectDelayTimer = null;
   }
 
   void beginAndroidDocumentPicker() {
@@ -1094,7 +1110,9 @@ class FfiModel with ChangeNotifier {
       _timer = Timer(Duration(seconds: _reconnects), () {
         reconnect(dialogManager, sessionId, false);
       });
-      _reconnects *= 2;
+      if (_reconnects < 8) {
+        _reconnects *= 2;
+      }
     } else {
       _reconnects = 1;
       _offlineReconnectStartTime = null;
