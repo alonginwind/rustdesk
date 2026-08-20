@@ -998,24 +998,18 @@ impl RendezvousMediator {
             return Ok(());
         }
         log::debug!("Punch tcp hole to {:?}", peer_addr);
-        let mut socket = {
-            let socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
-            let local_addr = socket.local_addr();
-            // key important here for punch hole to tell my gateway incoming peer is safe.
-            // Awaited rather than spawned so the mapping exists before `PunchHoleSent` goes out;
-            // `local_addr` itself is shared, not exclusive - every socket here binds it with the
-            // reuse flags `new_socket` sets.
-            allow_err!(socket_client::connect_tcp_local(peer_addr, Some(local_addr), 30).await);
-            socket
-        };
+        let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
+        let local_addr = socket.local_addr();
         let mut msg_out = Message::new();
         msg_out.set_punch_hole_sent(msg_punch);
         let bytes = msg_out.write_to_bytes()?;
         socket.send_raw(bytes).await?;
-        let local_addr = socket.local_addr();
-        // The listener inside takes this address over, so the mediator's socket goes first.
-        drop(socket);
-        punch_tcp_until_connected(server, peer_addr, local_addr, meta).await;
+        let side_punch = socket_client::connect_tcp_local(peer_addr, Some(local_addr), CONNECT_TIMEOUT).await.ok();
+        if let Some(stream) = side_punch {
+            // Side-punch connected (simultaneous open) - use directly, no listener needed
+            drop(socket); // rendezvous socket no longer needed
+            crate::server::create_tcp_connection(server, stream, peer_addr, true, meta).await?;
+        }
         Ok(())
     }
 
