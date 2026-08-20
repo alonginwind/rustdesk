@@ -52,6 +52,12 @@ fn connection_meta(
 lazy_static::lazy_static! {
     static ref SOLVING_PK_MISMATCH: Mutex<String> = Default::default();
     static ref LAST_MSG: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
+    // Separate dedup state for WebRTC-offer punch requests.  The controller fires two requests
+    // back-to-back when WebRTC is on — one with an offer (ICE signalling) and one without (the
+    // TCP-punch fallback) — both carrying the same peer address.  Sharing a single dedup slot
+    // would let one type suppress the other; keeping them apart lets each dedup its own
+    // duplicates without interfering with the other.
+    static ref LAST_WEBRTC_PUNCH: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
     static ref LAST_RELAY_MSG: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
     static ref WEBRTC_ICE_TXS: Mutex<HashMap<String, IceRoute>> = Default::default();
     static ref ICE_DIGEST_STATE: RandomState = Default::default();
@@ -1053,11 +1059,22 @@ impl RendezvousMediator {
 
     async fn handle_punch_hole(&self, ph: PunchHole, server: ServerPtr) -> ResultType<()> {
         let mut peer_addr = AddrMangle::decode(&ph.socket_addr);
-        let last = *LAST_MSG.lock().await;
-        *LAST_MSG.lock().await = (peer_addr, Instant::now());
-        // skip duplicate punch hole messages
-        if last.0 == peer_addr && last.1.elapsed().as_millis() < 100 {
-            return Ok(());
+        // The controller sends two requests when WebRTC is on — one with an offer and one without
+        // (the TCP-punch fallback) — both carrying the same peer address.  Each type dedups
+        // against its own slot so they cannot suppress each other.
+        if !ph.webrtc_sdp_offer.is_empty() {
+            let last = *LAST_WEBRTC_PUNCH.lock().await;
+            *LAST_WEBRTC_PUNCH.lock().await = (peer_addr, Instant::now());
+            if last.0 == peer_addr && last.1.elapsed().as_millis() < 100 {
+                return Ok(());
+            }
+        } else {
+            let last = *LAST_MSG.lock().await;
+            *LAST_MSG.lock().await = (peer_addr, Instant::now());
+            // skip duplicate punch hole messages
+            if last.0 == peer_addr && last.1.elapsed().as_millis() < 100 {
+                return Ok(());
+            }
         }
         let peer_addr_v6 = hbb_common::AddrMangle::decode(&ph.socket_addr_v6);
         let local_proxy = use_ws() || Config::is_proxy();
@@ -1175,23 +1192,12 @@ impl RendezvousMediator {
             return Ok(());
         }
         log::debug!("Punch tcp hole to {:?}", peer_addr);
-        let mut socket = {
-            let socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
-            let local_addr = socket.local_addr();
-            // key important here for punch hole to tell my gateway incoming peer is safe.
-            // Awaited rather than spawned so the mapping exists before `PunchHoleSent` goes out;
-            // `local_addr` itself is shared, not exclusive - every socket here binds it with the
-            // reuse flags `new_socket` sets.
-            allow_err!(socket_client::connect_tcp_local(peer_addr, Some(local_addr), 30).await);
-            socket
-        };
+        let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
+        let local_addr = socket.local_addr();
         let mut msg_out = Message::new();
         msg_out.set_punch_hole_sent(msg_punch);
         let bytes = msg_out.write_to_bytes()?;
         socket.send_raw(bytes).await?;
-        let local_addr = socket.local_addr();
-        // The listener inside takes this address over, so the mediator's socket goes first.
-        drop(socket);
         // The reply went out above: declined is the listen alone, so the controller's TCP attempt
         // meets nothing and its v6 one goes on.
         let Some(slot) = slot_tcp else {
@@ -1203,7 +1209,13 @@ impl RendezvousMediator {
             );
             return Ok(());
         };
-        punch_tcp_until_connected(server, peer_addr, local_addr, meta, slot).await;
+        let side_punch = socket_client::connect_tcp_local(peer_addr, Some(local_addr), CONNECT_TIMEOUT).await.ok();
+        if let Some(stream) = side_punch {
+            // Side-punch connected (simultaneous open) - use directly, no listener needed
+            drop(socket); // rendezvous socket no longer needed
+            drop(slot);
+            serve_punched(server, stream, peer_addr, meta).await;
+        }
         Ok(())
     }
 
