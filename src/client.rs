@@ -648,7 +648,7 @@ impl Client {
     )> {
         let direct_failures = interface.get_lch().read().unwrap().direct_failures;
         let mut connect_timeout = 0;
-        const MIN: u64 = 1000;
+        const MIN: u64 = 2000;
         if is_local || peer_nat_type == NatType::SYMMETRIC {
             connect_timeout = MIN;
         } else {
