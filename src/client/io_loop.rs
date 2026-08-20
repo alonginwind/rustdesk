@@ -199,10 +199,8 @@ impl<T: InvokeUiSession> Remote<T> {
                     return;
                 }
                 self.handler.update_direct(Some(direct));
-                if conn_type == ConnType::DEFAULT_CONN || conn_type == ConnType::VIEW_CAMERA {
-                    self.handler
-                        .set_fingerprint(crate::common::pk_to_fingerprint(pk.unwrap_or_default()));
-                }
+                self.handler
+                    .set_fingerprint(crate::common::pk_to_fingerprint(pk.unwrap_or_default()));
 
                 // just build for now
                 #[cfg(not(any(target_os = "windows", feature = "unix-file-copy-paste")))]

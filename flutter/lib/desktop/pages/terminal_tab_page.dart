@@ -4,12 +4,14 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/common/widgets/dialog.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/models/model.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 
 import '../../models/platform_model.dart';
@@ -45,7 +47,21 @@ class _TerminalTabPageState extends State<TerminalTabPage> {
       WindowController.fromWindowId(windowId())
           .setTitle(getWindowNameWithId(id));
     };
-    tabController.onRemoved = (_, id) => onRemoveId(id);
+    tabController.onRemoved = (_, id) {
+      final parsed = _parseTabKey(id);
+      if (parsed != null) {
+        final (peerId, _) = parsed;
+        final remaining = tabController.state.value.tabs.where((t) {
+          final p = _parseTabKey(t.key);
+          return p != null && p.$1 == peerId;
+        });
+        if (remaining.isEmpty) {
+          ConnectionTypeState.delete(peerId);
+          FingerprintState.delete(peerId);
+        }
+      }
+      onRemoveId(id);
+    };
     tabController.onCloseWindow = _closeWindowFromConnection;
     final terminalId = params['terminalId'] ?? _nextTerminalId++;
     tabController.add(_createTerminalTab(
@@ -70,6 +86,8 @@ class _TerminalTabPageState extends State<TerminalTabPage> {
     final alias = bind.mainGetPeerOptionSync(id: peerId, key: 'alias');
     final tabLabel =
         alias.isNotEmpty ? '$alias #$terminalId' : '$peerId #$terminalId';
+    ConnectionTypeState.init(peerId);
+    FingerprintState.init(peerId);
     return TabInfo(
       key: tabKey,
       label: tabLabel,
@@ -144,10 +162,21 @@ class _TerminalTabPageState extends State<TerminalTabPage> {
   Future<void> _closeAllTabs() async {
     _windowClosing = true;
     final tabKeys = tabController.state.value.tabs.map((t) => t.key).toList();
+    // Clean up per-peer connection type / fingerprint state since tabController.clear()
+    // does not fire onRemoved.
+    final peerIds = tabKeys
+        .map((k) => _parseTabKey(k))
+        .where((p) => p != null)
+        .map((p) => p!.$1)
+        .toSet();
     // Remove all UI tabs immediately (same instant behavior as the old tabController.clear())
     // Keep the cleanup target lookup below synchronous before its first await:
     // it relies on the current frame still retaining each TerminalPage's FFI/model.
     tabController.clear();
+    for (final peerId in peerIds) {
+      ConnectionTypeState.delete(peerId);
+      FingerprintState.delete(peerId);
+    }
     // Run session cleanup in parallel with bounded timeout (closeTerminal() has internal 3s timeout).
     // Skip tabs already being closed by a concurrent _closeTab() to avoid duplicate FFI calls.
     final futures = tabKeys
@@ -543,6 +572,59 @@ class _TerminalTabPageState extends State<TerminalTabPage> {
           tail: _buildAddButton(),
           selectedBorderColor: MyTheme.accent,
           labelGetter: DesktopTab.tablabelGetter,
+          tabBuilder: (key, icon, label, themeConf) {
+            final parsed = _parseTabKey(key);
+            if (parsed == null) {
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [icon, label],
+              );
+            }
+            final (peerId, _) = parsed;
+            return Obx(() {
+              final connectionType = ConnectionTypeState.find(peerId);
+              if (!connectionType.isValid()) {
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [icon, label],
+                );
+              } else {
+                bool secure =
+                    connectionType.secure.value == ConnectionType.strSecure;
+                bool direct =
+                    connectionType.direct.value == ConnectionType.strDirect;
+                String msgConn = getConnectionText(
+                    secure, direct, connectionType.stream_type.value);
+                var msgFingerprint = '${translate('Fingerprint')}:\n';
+                var fingerprint = FingerprintState.find(peerId).value;
+                if (fingerprint.isEmpty) {
+                  fingerprint = 'N/A';
+                }
+                if (fingerprint.length > 5 * 8) {
+                  var first = fingerprint.substring(0, 39);
+                  var second = fingerprint.substring(40);
+                  msgFingerprint += '$first\n$second';
+                } else {
+                  msgFingerprint += fingerprint;
+                }
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    icon,
+                    Tooltip(
+                      message: '$msgConn\n$msgFingerprint',
+                      child: SvgPicture.asset(
+                        'assets/${connectionType.secure.value}${connectionType.direct.value}.svg',
+                        width: themeConf.iconSize,
+                        height: themeConf.iconSize,
+                      ).paddingOnly(right: 5),
+                    ),
+                    label,
+                  ],
+                );
+              }
+            });
+          },
           tabMenuBuilder: (key) {
             final parsed = _parseTabKey(key);
             if (parsed == null) return Container();
