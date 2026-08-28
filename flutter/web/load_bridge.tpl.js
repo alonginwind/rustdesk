@@ -21,9 +21,41 @@ function generateUuid() {
   return `${h}-${m1}-${m2}-${m3}-${lo}`;
 }
 
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  return bytes;
+}
+
+let _keyReady = null;
+
+async function generateKeyPair() {
+  try {
+    const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+    const jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+    localStorage.setItem('pk', bytesToHex(raw));
+    localStorage.setItem('sk_jwk', JSON.stringify(jwk));
+  } catch(e) {
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    localStorage.setItem('pk', bytesToHex(raw));
+    console.warn('[WebBridge] Ed25519 not supported, using random pk');
+  }
+}
+
 function configInit() {
   if (!localStorage.getItem('id')) localStorage.setItem('id', generateId());
   if (!localStorage.getItem('uuid')) localStorage.setItem('uuid', generateUuid());
+  if (!localStorage.getItem('pk')) _keyReady = generateKeyPair();
+}
+
+function getPkBytes() {
+  const pkHex = localStorage.getItem('pk');
+  return pkHex ? hexToBytes(pkHex) : new Uint8Array(0);
 }
 
 function detectOs() {
@@ -95,10 +127,39 @@ function translateText(fallbackLocale, text) {
 
 // --- Protobuf encoding for rendezvous protocol ---
 
+// RendezvousMessage oneof field numbers (rendezvous.proto)
+const MSG = {
+  REGISTER_PEER: 6,
+  REGISTER_PEER_RESPONSE: 7,
+  PUNCH_HOLE_REQUEST: 8,
+  PUNCH_HOLE_SENT: 10,
+  PUNCH_HOLE_RESPONSE: 11,
+  FETCH_LOCAL_ADDR: 12,
+  LOCAL_ADDR: 13,
+  CONFIG_UPDATE: 14,
+  REGISTER_PK: 15,
+  REGISTER_PK_RESPONSE: 16,
+  SOFTWARE_UPDATE: 17,
+  REQUEST_RELAY: 18,
+  RELAY_RESPONSE: 19,
+  TEST_NAT_REQUEST: 20,
+  TEST_NAT_RESPONSE: 21,
+  PEER_DISCOVERY: 22,
+  ONLINE_REQUEST: 23,
+  ONLINE_RESPONSE: 24,
+  KEY_EXCHANGE: 25,
+  HEALTH_CHECK: 26,
+};
+
+function pbRawTag(field, wireType) {
+  const tag = (field << 3) | wireType;
+  return field < 16 ? [tag] : pbVarint(tag);
+}
+
 function pbString(field, str) {
   const bytes = new TextEncoder().encode(str);
   return new Uint8Array([
-    (field << 3) | 2,
+    ...pbRawTag(field, 2),
     ...pbVarint(bytes.length),
     ...bytes
   ]);
@@ -119,45 +180,75 @@ function pbConcat(...arrays) {
   return r;
 }
 
-function buildOnlineRequest(myId, peers) {
-  // OnlineRequest: field 1 = id (string), field 2 = peers (repeated string)
-  const inner = pbConcat(
-    pbString(1, myId),
-    ...peers.map(p => pbString(2, p))
-  );
-  // RendezezvousMessage: field 23 = online_request (field 23, wire type 2 = tag 186)
+function pbBytes(field, bytes) {
+  return new Uint8Array([
+    ...pbRawTag(field, 2),
+    ...pbVarint(bytes.length),
+    ...bytes
+  ]);
+}
+
+function pbEmbed(field, inner) {
   return pbConcat(
-    new Uint8Array([186, 1]),
+    new Uint8Array(pbRawTag(field, 2)),
     new Uint8Array(pbVarint(inner.length)),
     inner
   );
 }
 
-function parseOnlineResponse(data) {
-  // OnlineResponse: field 1 = states (bytes)
+function pbUint32(field, n) {
+  return new Uint8Array([
+    ...pbRawTag(field, 0),
+    ...pbVarint(n)
+  ]);
+}
+
+function pbBool(field, v) {
+  return new Uint8Array([...pbRawTag(field, 0), v ? 1 : 0]);
+}
+
+function wrapRendezvous(field, inner) {
+  return pbEmbed(field, inner);
+}
+
+function parseRendezvousFields(data) {
+  const fields = {};
   let pos = 0;
   while (pos < data.length) {
     let tag = 0, shift = 0;
     do { tag |= (data[pos] & 0x7F) << shift; shift += 7; } while (data[pos++] & 0x80);
     const fieldNum = tag >>> 3, wireType = tag & 7;
-    if (fieldNum === 1 && wireType === 2) {
+    if (wireType === 2) {
       let len = 0; shift = 0;
       do { len |= (data[pos] & 0x7F) << shift; shift += 7; } while (data[pos++] & 0x80);
-      return data.slice(pos, pos + len);
-    } else if (wireType === 2) {
-      let len = 0; shift = 0;
-      do { len |= (data[pos] & 0x7F) << shift; shift += 7; } while (data[pos++] & 0x80);
+      if (!(fieldNum in fields)) fields[fieldNum] = data.slice(pos, pos + len);
       pos += len;
     } else if (wireType === 0) {
-      while (data[pos++] & 0x80) {}
+      let val = 0; shift = 0;
+      do { val |= (data[pos] & 0x7F) << shift; shift += 7; } while (data[pos++] & 0x80);
+      if (!(fieldNum in fields)) fields[fieldNum] = val;
+    } else if (wireType === 5) {
+      if (!(fieldNum in fields)) fields[fieldNum] = data.slice(pos, pos + 4);
+      pos += 4;
+    } else if (wireType === 1) {
+      if (!(fieldNum in fields)) fields[fieldNum] = data.slice(pos, pos + 8);
+      pos += 8;
     } else break;
   }
-  return new Uint8Array(0);
+  return fields;
 }
 
-// --- Online status query via WebSocket ---
+function buildOnlineRequest(myId, peers) {
+  const inner = pbConcat(pbString(1, myId), ...peers.map(p => pbString(2, p)));
+  return wrapRendezvous(MSG.ONLINE_REQUEST, inner);
+}
 
-function getOnlineWsUrl() {
+function parseOnlineResponse(data) {
+  const f = parseRendezvousFields(data);
+  return f[1] || new Uint8Array(0);
+}
+
+function getRendezvousWsUrl() {
   const api = getApiServer();
   const rs = localStorage.getItem('custom-rendezvous-server');
   let host, wsPort, secure;
@@ -191,12 +282,14 @@ function fireOnlineCallback(onlines, offlines) {
   setTimeout(() => { if (typeof window.onRegisteredEvent === 'function') window.onRegisteredEvent(evt); }, 0);
 }
 
+// --- Online status query via WebSocket ---
+
 function queryOnlines(value) {
   let ids = [];
   try { ids = JSON.parse(value || '[]'); } catch(e) { return; }
   if (!ids.length) return;
 
-  const wsUrl = getOnlineWsUrl();
+  const wsUrl = getRendezvousWsUrl();
   if (!wsUrl) { fireOnlineCallback([], ids); return; }
 
   const myId = localStorage.getItem('id') || '';
@@ -254,6 +347,286 @@ function queryOnlines(value) {
     clearTimeout(timeout);
     fireOnlineCallback([], ids);
   };
+}
+
+// --- Session: Rendezvous + Relay connection ---
+
+let sessionState = {
+  rzWs: null,
+  relayWs: null,
+  peerId: '',
+  connType: 0,
+  uuid: '',
+  relayServer: '',
+  signedIdPk: null,
+  password: '',
+  isFileTransfer: false,
+  isViewCamera: false,
+  isTerminal: false,
+  closed: false,
+  rzTimeout: null,
+  relayTimeout: null
+};
+
+function getRelayWsUrl(relayServer) {
+  const api = getApiServer();
+  const url = new URL(api);
+  let secure = url.protocol === 'https:';
+  if (relayServer) {
+    const parts = relayServer.split(':');
+    const host = parts[0];
+    return `${secure ? 'wss' : 'ws'}://${host}:${url.port}/ws/relay`;
+  } else {
+    return `${secure ? 'wss' : 'ws'}://${url.hostname}:${url.port}/ws/relay`;
+  }
+}
+
+function fireSessionEvent(name, data) {
+  const evt = JSON.stringify({ name: name, data: typeof data === 'string' ? data : JSON.stringify(data) });
+  setTimeout(() => { if (typeof window.onRegisteredEvent === 'function') window.onRegisteredEvent(evt); }, 0);
+}
+
+function sessionFail(reason) {
+  console.error('[WebBridge] session fail:', reason);
+  const evt = JSON.stringify({ name: 'msgbox', type: 'error', title: 'Connection Error', text: reason, link: '' });
+  setTimeout(() => {
+    if (typeof window.onGlobalEvent === 'function') window.onGlobalEvent(evt);
+    else if (typeof window.onRegisteredEvent === 'function') window.onRegisteredEvent(evt);
+  }, 0);
+  closeSession();
+}
+
+function closeSession() {
+  sessionState.closed = true;
+  if (sessionState.rzTimeout) { clearTimeout(sessionState.rzTimeout); sessionState.rzTimeout = null; }
+  if (sessionState.relayTimeout) { clearTimeout(sessionState.relayTimeout); sessionState.relayTimeout = null; }
+  if (sessionState.rzWs) { try { sessionState.rzWs.close(); } catch(e) {} sessionState.rzWs = null; }
+  if (sessionState.relayWs) { try { sessionState.relayWs.close(); } catch(e) {} sessionState.relayWs = null; }
+}
+
+function splitRendezvousMessages(data) {
+  const msgs = [];
+  let pos = 0;
+  while (pos < data.length) {
+    const start = pos;
+    let tag = 0, shift = 0;
+    do { tag |= (data[pos] & 0x7F) << shift; shift += 7; } while (data[pos++] & 0x80);
+    const wireType = tag & 7;
+    if (wireType === 2) {
+      let len = 0; shift = 0;
+      do { len |= (data[pos] & 0x7F) << shift; shift += 7; } while (data[pos++] & 0x80);
+      pos += len;
+    } else if (wireType === 0) {
+      do {} while (data[pos++] & 0x80);
+    } else if (wireType === 5) { pos += 4;
+    } else if (wireType === 1) { pos += 8;
+    } else break;
+    msgs.push(data.slice(start, pos));
+  }
+  return msgs;
+}
+
+function startSessionConnection(peerId, connType, password, isFileTransfer, isViewCamera, isTerminal) {
+  closeSession();
+  sessionState.closed = false;
+  sessionState.peerId = peerId;
+  sessionState.connType = connType;
+  sessionState.password = password || '';
+  sessionState.isFileTransfer = isFileTransfer;
+  sessionState.isViewCamera = isViewCamera;
+  sessionState.isTerminal = isTerminal;
+
+  const wsUrl = getRendezvousWsUrl();
+  console.log('[WebBridge] rendezvous wsUrl:', wsUrl, 'peerId:', peerId);
+  if (!wsUrl) { sessionFail('No rendezvous server configured'); return; }
+
+  const ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
+  sessionState.rzWs = ws;
+
+  sessionState.rzTimeout = setTimeout(() => {
+    sessionFail('Timeout');
+  }, 15000);
+
+  ws.onopen = () => {
+    console.log('[WebBridge] rendezvous WS connected');
+    sendPunchHoleRequest();
+  };
+
+  function sendPunchHoleRequest() {
+    const key = localStorage.getItem('key') || '';
+    const token = localStorage.getItem('option:local:access_token') || '';
+    console.log('[WebBridge] PunchHoleRequest key:', key ? key.substring(0, 8) + '...' : '(empty)', 'keyLen:', key.length, 'token:', token ? 'present' : '(empty)');
+    const punchInner = pbConcat(
+      pbString(1, peerId),
+      pbString(3, key),
+      pbUint32(4, connType),
+      pbString(5, token),
+      pbString(6, VERSION),
+      pbBool(8, true)
+    );
+    const punchMsg = wrapRendezvous(MSG.PUNCH_HOLE_REQUEST, punchInner);
+    ws.send(punchMsg);
+    console.log('[WebBridge] PunchHoleRequest sent, peerId:', peerId, 'bytes:', punchMsg.length);
+  }
+
+  ws.onmessage = (e) => {
+    const data = new Uint8Array(e.data);
+    console.log('[WebBridge] rendezvous WS message, bytes:', data.length, 'first:', Array.from(data.slice(0, Math.min(20, data.length))));
+    const msgs = splitRendezvousMessages(data);
+    for (const msgData of msgs) {
+      if (sessionState.closed) break;
+      try {
+        const outer = parseRendezvousFields(msgData);
+        if (outer[MSG.PUNCH_HOLE_RESPONSE]) {
+          clearTimeout(sessionState.rzTimeout);
+          const ph = parseRendezvousFields(outer[MSG.PUNCH_HOLE_RESPONSE]);
+          const socketAddr = ph[1];
+          if (!socketAddr || socketAddr.length === 0) {
+            if (ph[7] instanceof Uint8Array && ph[7].length > 0) {
+              sessionFail(new TextDecoder().decode(ph[7]));
+            } else {
+              const failMap = { 0: 'ID does not exist', 2: 'Remote desktop is offline', 3: 'Key mismatch', 4: 'Key overuse' };
+              sessionFail(failMap[ph[3]] || 'other punch hole failure');
+            }
+            break;
+          }
+          sessionState.relayServer = ph[4] ? new TextDecoder().decode(ph[4]) : '';
+          sessionState.signedIdPk = ph[2] || null;
+          connectRelay();
+        } else if (outer[MSG.RELAY_RESPONSE]) {
+          clearTimeout(sessionState.rzTimeout);
+          const rr = parseRendezvousFields(outer[MSG.RELAY_RESPONSE]);
+          const refuse = rr[6];
+          if (refuse instanceof Uint8Array && refuse.length > 0) {
+            sessionFail('Relay refused: ' + new TextDecoder().decode(refuse));
+            break;
+          }
+          sessionState.uuid = rr[2] ? new TextDecoder().decode(rr[2]) : '';
+          sessionState.relayServer = rr[3] ? new TextDecoder().decode(rr[3]) : '';
+          sessionState.signedIdPk = rr[5] || null;
+          connectRelay();
+        } else if (outer[MSG.REGISTER_PEER_RESPONSE]) {
+          const rpr = parseRendezvousFields(outer[MSG.REGISTER_PEER_RESPONSE]);
+          const requestPk = rpr[2] && (rpr[2] instanceof Uint8Array ? rpr[2].length > 0 && rpr[2][0] : rpr[2]);
+          if (requestPk) {
+            (async () => {
+              try {
+                if (_keyReady) await _keyReady;
+                const pkBytes = getPkBytes();
+                if (pkBytes.length === 0) { sendPunchHoleRequest(); return; }
+                const uuid = localStorage.getItem('uuid') || '';
+                const myId = localStorage.getItem('id') || '';
+                const regInner = pbConcat(
+                  pbString(1, myId),
+                  pbBytes(2, hexToBytes(uuid.replace(/-/g, ''))),
+                  pbBytes(3, pkBytes)
+                );
+                ws.send(wrapRendezvous(MSG.REGISTER_PK, regInner));
+                console.log('[WebBridge] RegisterPk sent');
+              } catch(e) {
+                console.warn('[WebBridge] RegisterPk failed:', e);
+                sendPunchHoleRequest();
+              }
+            })();
+          } else {
+            sendPunchHoleRequest();
+          }
+        } else if (outer[MSG.REGISTER_PK_RESPONSE]) {
+          const rpk = parseRendezvousFields(outer[MSG.REGISTER_PK_RESPONSE]);
+          const result = rpk[1];
+          if (result && result.length > 0 && result[0] !== 0) {
+            console.warn('[WebBridge] RegisterPk failed, result:', result[0]);
+          } else {
+            console.log('[WebBridge] RegisterPk OK, sending PunchHoleRequest');
+            sendPunchHoleRequest();
+          }
+        } else {
+          console.warn('[WebBridge] Unknown rendezvous response, fields:', Object.keys(outer));
+        }
+      } catch(err) {
+        clearTimeout(sessionState.rzTimeout);
+        sessionFail('Rendezvous error: ' + err);
+        break;
+      }
+    }
+  };
+
+  ws.onerror = (e) => {
+    console.error('[WebBridge] rendezvous WS error', e);
+    clearTimeout(sessionState.rzTimeout);
+    sessionFail('Failed to connect via rendezvous server');
+  };
+
+  ws.onclose = (e) => {
+    console.log('[WebBridge] rendezvous WS closed, code:', e.code, 'reason:', e.reason);
+  };
+}
+
+function connectRelay() {
+  if (sessionState.closed) return;
+  const relayUrl = getRelayWsUrl(sessionState.relayServer);
+  if (!relayUrl) { sessionFail('Cannot derive relay URL'); return; }
+
+  const ws = new WebSocket(relayUrl);
+  ws.binaryType = 'arraybuffer';
+  sessionState.relayWs = ws;
+
+  sessionState.relayTimeout = setTimeout(() => {
+    sessionFail('Timeout');
+  }, 15000);
+
+  ws.onopen = () => {
+    const key = localStorage.getItem('key') || '';
+    const token = localStorage.getItem('option:local:access_token') || '';
+    const inner = pbConcat(
+      pbString(1, sessionState.peerId),
+      pbString(2, sessionState.uuid || ''),
+      pbString(6, key),
+      pbUint32(7, sessionState.connType),
+      pbString(8, token)
+    );
+    ws.send(wrapRendezvous(MSG.REQUEST_RELAY, inner));
+  };
+
+  ws.onmessage = (e) => {
+    clearTimeout(sessionState.relayTimeout);
+    const data = new Uint8Array(e.data);
+    try {
+      const outer = parseRendezvousFields(data);
+      if (outer[MSG.RELAY_RESPONSE]) {
+        const rr = parseRendezvousFields(outer[MSG.RELAY_RESPONSE]);
+        const refuse = rr[6];
+        if (refuse instanceof Uint8Array && refuse.length > 0) {
+          sessionFail('Relay refused: ' + new TextDecoder().decode(refuse));
+          return;
+        }
+        if (rr[2] instanceof Uint8Array) {
+          sessionState.relayServer = new TextDecoder().decode(rr[2]);
+        }
+        fireSessionEvent('callback_msgbox', JSON.stringify({ type: 'info', detail: 'Relay connected, waiting for peer...' }));
+      } else {
+        handleRelayMessage(data);
+      }
+    } catch(err) {
+      sessionFail('Relay error: ' + err);
+    }
+  };
+
+  ws.onerror = () => {
+    clearTimeout(sessionState.relayTimeout);
+    sessionFail('Failed to connect via relay server');
+  };
+}
+
+function handleRelayMessage(data) {
+  // Phase 3: crypto handshake + login will be handled here
+  // For now, parse as Message proto and dispatch
+  try {
+    const msg = parseRendezvousFields(data);
+    // field 9 = Hash, field 25 = PeerInfo, field 6 = VideoFrame, etc.
+    // Will be implemented in Phase 3
+  } catch(e) {}
 }
 
 // --- Public API ---
@@ -323,6 +696,51 @@ window.setByName = function(name, value) {
       case 'query_onlines':
         queryOnlines(value);
         return '';
+      case 'session_add_sync': {
+        try {
+          const obj = JSON.parse(value);
+          sessionState.peerId = obj.id || '';
+          sessionState.password = obj.password || '';
+          sessionState.isFileTransfer = !!obj.isFileTransfer;
+          sessionState.isViewCamera = !!obj.isViewCamera;
+          sessionState.isTerminal = !!obj.isTerminal;
+        } catch(e) {}
+        return '';
+      }
+      case 'session_start': {
+        try {
+          const obj = JSON.parse(value);
+          let ct = 0;
+          if (sessionState.isFileTransfer) ct = 1;
+          else if (sessionState.isViewCamera) ct = 4;
+          else if (sessionState.isTerminal) ct = 5;
+          console.log('[WebBridge] session_start:', obj.id, 'ct:', ct, 'peerId:', sessionState.peerId);
+          startSessionConnection(obj.id || sessionState.peerId, ct, sessionState.password, sessionState.isFileTransfer, sessionState.isViewCamera, sessionState.isTerminal);
+        } catch(e) { console.error('[WebBridge] session_start error:', e); }
+        return '';
+      }
+      case 'login': {
+        // Phase 3: send login credentials after crypto handshake
+        return '';
+      }
+      case 'send_2fa': {
+        // Phase 3: send 2FA code
+        return '';
+      }
+      case 'session_close':
+        console.log('[WebBridge] session_close');
+        closeSession();
+        return '';
+      case 'reconnect': {
+        if (sessionState.peerId) {
+          let ct = 0;
+          if (sessionState.isFileTransfer) ct = 1;
+          else if (sessionState.isViewCamera) ct = 4;
+          else if (sessionState.isTerminal) ct = 5;
+          startSessionConnection(sessionState.peerId, ct, sessionState.password, sessionState.isFileTransfer, sessionState.isViewCamera, sessionState.isTerminal);
+        }
+        return '';
+      }
       case 'option':
       case 'option:local':
       case 'option:flutter:peer':
