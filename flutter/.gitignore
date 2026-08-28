@@ -32,6 +32,9 @@
 /build/
 
 # Web related
+!web/*
+!web/icons/*
+web/load_bridge.js
 
 # Symbolication related
 app.*.symbols

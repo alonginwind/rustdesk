@@ -7,4 +7,10 @@ if [ "$1" == "android" ]; then
 elif [ "$1" == "linux" ]; then
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
     python3 ./build.py --flutter --skip-cargo
+elif [ "$1" == "web" ]; then
+    python3 ./extract_translations.py
+    pushd flutter
+    flutter build web --release
+    popd
+    rm flutter/build/web/load_bridge.tpl.js
 fi
