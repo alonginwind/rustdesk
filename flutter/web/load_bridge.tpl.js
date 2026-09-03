@@ -248,6 +248,90 @@ function parseOnlineResponse(data) {
   return f[1] || new Uint8Array(0);
 }
 
+// --- Message proto field numbers (message.proto) ---
+const MSG_MSG = {
+  SIGNED_ID: 3,
+  PUBLIC_KEY: 4,
+  LOGIN_REQUEST: 7,
+  LOGIN_RESPONSE: 8,
+  HASH: 9,
+  PEER_INFO: 25,
+};
+
+const DEFAULT_RS_PUB_KEY = 'CtQ3yjQEVuTIVP7tVt4vRS3HJl0RfSLYrwPA8vpU6rw=';
+
+// --- SHA-256 (pure JS) ---
+function sha256(data) {
+  const K = [
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+  ];
+  let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a;
+  let h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+  const len = data.length;
+  const bitLen = len * 8;
+  const padLen = ((56 - (len + 1) % 64) + 64) % 64;
+  const buf = new Uint8Array(len + 1 + padLen + 8);
+  buf.set(data);
+  buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(buf.length - 4, bitLen, false);
+  for (let off = 0; off < buf.length; off += 64) {
+    const w = new Int32Array(64);
+    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(off + i * 4, false);
+    for (let i = 16; i < 64; i++) {
+      const s0 = (((w[i-15]>>>7)|(w[i-15]<<25)) ^ ((w[i-15]>>>18)|(w[i-15]<<14)) ^ (w[i-15]>>>3))|0;
+      const s1 = (((w[i-2]>>>17)|(w[i-2]<<15)) ^ ((w[i-2]>>>19)|(w[i-2]<<13)) ^ (w[i-2]>>>10))|0;
+      w[i] = (w[i-16] + s0 + w[i-7] + s1)|0;
+    }
+    let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+    for (let i = 0; i < 64; i++) {
+      const S1 = ((e>>>6)|(e<<26)) ^ ((e>>>11)|(e<<21)) ^ ((e>>>25)|(e<<7));
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[i] + w[i])|0;
+      const S0 = ((a>>>2)|(a<<30)) ^ ((a>>>13)|(a<<19)) ^ ((a>>>22)|(a<<10));
+      const t2 = (S0 + ((a&b)^(a&c)^(b&c)))|0;
+      h=g; g=f; f=e; e=(d+t1)|0; d=c; c=b; b=a; a=(t1+t2)|0;
+    }
+    h0=(h0+a)|0; h1=(h1+b)|0; h2=(h2+c)|0; h3=(h3+d)|0;
+    h4=(h4+e)|0; h5=(h5+f)|0; h6=(h6+g)|0; h7=(h7+h)|0;
+  }
+  const r = new Uint8Array(32);
+  const rv = new DataView(r.buffer);
+  rv.setInt32(0,h0,false); rv.setInt32(4,h1,false);
+  rv.setInt32(8,h2,false); rv.setInt32(12,h3,false);
+  rv.setInt32(16,h4,false); rv.setInt32(20,h5,false);
+  rv.setInt32(24,h6,false); rv.setInt32(28,h7,false);
+  return r;
+}
+
+// --- Crypto helpers (tweetnacl) ---
+function b64decode(s) {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function getRsPk() {
+  const key = localStorage.getItem('key') || DEFAULT_RS_PUB_KEY;
+  return b64decode(key);
+}
+
+function getNonce(seqnum) {
+  const nonce = new Uint8Array(24);
+  const view = new DataView(nonce.buffer);
+  view.setUint32(0, Number(seqnum & 0xFFFFFFFFn), true);
+  view.setUint32(4, Number((seqnum >> 32n) & 0xFFFFFFFFn), true);
+  return nonce;
+}
+
 function getRendezvousWsUrl() {
   const api = getApiServer();
   const rs = localStorage.getItem('custom-rendezvous-server');
@@ -359,19 +443,29 @@ let sessionState = {
   uuid: '',
   relayServer: '',
   signedIdPk: null,
+  signPk: null,
   password: '',
   isFileTransfer: false,
   isViewCamera: false,
   isTerminal: false,
   closed: false,
   rzTimeout: null,
-  relayTimeout: null
+  relayTimeout: null,
+  rzRegWs: null,
+  rzRegTimeout: null,
+  sessionKey: null,
+  encSeqSend: 0n,
+  encSeqRecv: 0n,
+  secured: false,
+  hashSalt: '',
+  hashChallenge: '',
+  loginPassword: ''
 };
 
 function getRelayWsUrl(relayServer) {
   const api = getApiServer();
   const url = new URL(api);
-  let secure = url.protocol === 'https:';
+  const secure = url.protocol === 'https:';
   if (relayServer) {
     const parts = relayServer.split(':');
     const host = parts[0];
@@ -400,8 +494,18 @@ function closeSession() {
   sessionState.closed = true;
   if (sessionState.rzTimeout) { clearTimeout(sessionState.rzTimeout); sessionState.rzTimeout = null; }
   if (sessionState.relayTimeout) { clearTimeout(sessionState.relayTimeout); sessionState.relayTimeout = null; }
+  if (sessionState.rzRegWs) { try { sessionState.rzRegWs.close(); } catch(e) {} sessionState.rzRegWs = null; }
+  if (sessionState.rzRegTimeout) { clearTimeout(sessionState.rzRegTimeout); sessionState.rzRegTimeout = null; }
   if (sessionState.rzWs) { try { sessionState.rzWs.close(); } catch(e) {} sessionState.rzWs = null; }
   if (sessionState.relayWs) { try { sessionState.relayWs.close(); } catch(e) {} sessionState.relayWs = null; }
+  sessionState.sessionKey = null;
+  sessionState.encSeqSend = 0n;
+  sessionState.encSeqRecv = 0n;
+  sessionState.secured = false;
+  sessionState.signPk = null;
+  sessionState.hashSalt = '';
+  sessionState.hashChallenge = '';
+  sessionState.loginPassword = '';
 }
 
 function splitRendezvousMessages(data) {
@@ -493,18 +597,40 @@ function startSessionConnection(peerId, connType, password, isFileTransfer, isVi
           }
           sessionState.relayServer = ph[4] ? new TextDecoder().decode(ph[4]) : '';
           sessionState.signedIdPk = ph[2] || null;
-          connectRelay();
+          console.log('[WebBridge] PunchHoleResponse: socketAddr=', socketAddr ? socketAddr.length + ' bytes' : 'null', 'relayServer=', sessionState.relayServer, 'signedIdPk=', sessionState.signedIdPk ? sessionState.signedIdPk.length + ' bytes' : 'null');
+          if (sessionState.signedIdPk && sessionState.signedIdPk instanceof Uint8Array && sessionState.signedIdPk.length > 0) {
+            try {
+              const rsPk = getRsPk();
+              const idPkBytes = nacl.sign.open(sessionState.signedIdPk, rsPk);
+              if (idPkBytes) {
+                const idPk = parseRendezvousFields(idPkBytes);
+                if (idPk[2] && idPk[2].length === 32) {
+                  sessionState.signPk = idPk[2];
+                  console.log('[WebBridge] signPk extracted from signedIdPk');
+                }
+              }
+            } catch(e) { console.warn('[WebBridge] sign_pk extraction failed:', e); }
+          }
+          sessionState.uuid = generateUuid();
+          registerRelaySession();
         } else if (outer[MSG.RELAY_RESPONSE]) {
           clearTimeout(sessionState.rzTimeout);
           const rr = parseRendezvousFields(outer[MSG.RELAY_RESPONSE]);
           const refuse = rr[6];
           if (refuse instanceof Uint8Array && refuse.length > 0) {
-            sessionFail('Relay refused: ' + new TextDecoder().decode(refuse));
+            sessionFail(new TextDecoder().decode(refuse));
             break;
           }
-          sessionState.uuid = rr[2] ? new TextDecoder().decode(rr[2]) : '';
-          sessionState.relayServer = rr[3] ? new TextDecoder().decode(rr[3]) : '';
-          sessionState.signedIdPk = rr[5] || null;
+          if (rr[2] instanceof Uint8Array && rr[2].length > 0) {
+            sessionState.uuid = new TextDecoder().decode(rr[2]);
+          }
+          if (rr[3] instanceof Uint8Array) {
+            sessionState.relayServer = new TextDecoder().decode(rr[3]);
+          }
+          if (rr[5] instanceof Uint8Array) {
+            sessionState.signedIdPk = rr[5];
+          }
+          console.log('[WebBridge] RelayResponse (registration OK), uuid=', sessionState.uuid, 'relayServer=', sessionState.relayServer);
           connectRelay();
         } else if (outer[MSG.REGISTER_PEER_RESPONSE]) {
           const rpr = parseRendezvousFields(outer[MSG.REGISTER_PEER_RESPONSE]);
@@ -563,9 +689,69 @@ function startSessionConnection(peerId, connType, password, isFileTransfer, isVi
   };
 }
 
+function registerRelaySession() {
+  if (sessionState.closed) return;
+  const rzUrl = sessionState.rzWs ? sessionState.rzWs.url : null;
+  if (!rzUrl) { sessionFail('No rendezvous connection for relay registration'); return; }
+  console.log('[WebBridge] registerRelaySession: url=', rzUrl, 'uuid=', sessionState.uuid);
+  const ws = new WebSocket(rzUrl);
+  ws.binaryType = 'arraybuffer';
+  sessionState.rzRegWs = ws;
+  sessionState.rzRegTimeout = setTimeout(() => {
+    try { ws.close(); } catch(e) {}
+    sessionState.rzRegWs = null;
+    sessionFail('Timeout');
+  }, 15000);
+  ws.onopen = () => {
+    const key = localStorage.getItem('key') || '';
+    const token = localStorage.getItem('option:local:access_token') || '';
+    const inner = pbConcat(
+      pbString(1, sessionState.peerId),
+      pbString(2, sessionState.uuid),
+      pbString(4, sessionState.relayServer),
+      pbBool(5, true),
+      pbString(6, key),
+      pbString(8, token)
+    );
+    ws.send(wrapRendezvous(MSG.REQUEST_RELAY, inner));
+    console.log('[WebBridge] Relay registration sent');
+  };
+  ws.onmessage = (e) => {
+    clearTimeout(sessionState.rzRegTimeout);
+    const data = new Uint8Array(e.data);
+    console.log('[WebBridge] Relay registration response, bytes:', data.length);
+    try {
+      const outer = parseRendezvousFields(data);
+      if (outer[MSG.RELAY_RESPONSE]) {
+        const rr = parseRendezvousFields(outer[MSG.RELAY_RESPONSE]);
+        const refuse = rr[6];
+        if (refuse instanceof Uint8Array && refuse.length > 0) {
+          sessionFail(new TextDecoder().decode(refuse));
+          return;
+        }
+        console.log('[WebBridge] Relay registration OK');
+        connectRelay();
+      }
+    } catch(err) {
+      sessionFail('Relay registration error: ' + err);
+    }
+    try { ws.close(); } catch(e) {}
+    sessionState.rzRegWs = null;
+  };
+  ws.onerror = () => {
+    console.error('[WebBridge] Relay registration WS error');
+    clearTimeout(sessionState.rzRegTimeout);
+    sessionFail('Failed to register relay session');
+  };
+  ws.onclose = () => {
+    console.log('[WebBridge] Relay registration WS closed');
+  };
+}
+
 function connectRelay() {
   if (sessionState.closed) return;
   const relayUrl = getRelayWsUrl(sessionState.relayServer);
+  console.log('[WebBridge] connectRelay: relayServer=', sessionState.relayServer, 'relayUrl=', relayUrl);
   if (!relayUrl) { sessionFail('Cannot derive relay URL'); return; }
 
   const ws = new WebSocket(relayUrl);
@@ -577,6 +763,7 @@ function connectRelay() {
   }, 15000);
 
   ws.onopen = () => {
+    console.log('[WebBridge] relay WS connected');
     const key = localStorage.getItem('key') || '';
     const token = localStorage.getItem('option:local:access_token') || '';
     const inner = pbConcat(
@@ -587,11 +774,13 @@ function connectRelay() {
       pbString(8, token)
     );
     ws.send(wrapRendezvous(MSG.REQUEST_RELAY, inner));
+    console.log('[WebBridge] RequestRelay sent, uuid=', sessionState.uuid || '');
   };
 
   ws.onmessage = (e) => {
     clearTimeout(sessionState.relayTimeout);
     const data = new Uint8Array(e.data);
+    console.log('[WebBridge] relay WS message, bytes:', data.length, 'first:', Array.from(data.slice(0, Math.min(20, data.length))));
     try {
       const outer = parseRendezvousFields(data);
       if (outer[MSG.RELAY_RESPONSE]) {
@@ -604,7 +793,22 @@ function connectRelay() {
         if (rr[2] instanceof Uint8Array) {
           sessionState.relayServer = new TextDecoder().decode(rr[2]);
         }
-        fireSessionEvent('callback_msgbox', JSON.stringify({ type: 'info', detail: 'Relay connected, waiting for peer...' }));
+        if (sessionState.signedIdPk && sessionState.signedIdPk instanceof Uint8Array && sessionState.signedIdPk.length > 0) {
+          try {
+            const rsPk = getRsPk();
+            const idPkBytes = nacl.sign.open(sessionState.signedIdPk, rsPk);
+            if (idPkBytes) {
+              const idPk = parseRendezvousFields(idPkBytes);
+              if (idPk[2] && idPk[2].length === 32) {
+                sessionState.signPk = idPk[2];
+              }
+            }
+          } catch(e) { console.warn('[WebBridge] sign_pk extraction failed:', e); }
+        }
+        console.log('[WebBridge] RelayResponse received, signPk=', sessionState.signPk ? 'extracted' : 'null');
+        sessionState.relayTimeout = setTimeout(() => {
+          sessionFail('Timeout');
+        }, 15000);
       } else {
         handleRelayMessage(data);
       }
@@ -613,20 +817,147 @@ function connectRelay() {
     }
   };
 
-  ws.onerror = () => {
+  ws.onerror = (e) => {
+    console.error('[WebBridge] relay WS error', e);
     clearTimeout(sessionState.relayTimeout);
     sessionFail('Failed to connect via relay server');
   };
+
+  ws.onclose = (e) => {
+    console.log('[WebBridge] relay WS closed, code:', e.code, 'reason:', e.reason);
+  };
+}
+
+function wrapMsg(field, inner) {
+  return pbConcat(new Uint8Array(pbRawTag(field, 2)), new Uint8Array(pbVarint(inner.length)), inner);
+}
+
+function relaySend(bytes) {
+  if (sessionState.secured) {
+    sessionState.encSeqSend++;
+    const nonce = getNonce(sessionState.encSeqSend);
+    sessionState.relayWs.send(nacl.secretbox(bytes, nonce, sessionState.sessionKey));
+  } else {
+    sessionState.relayWs.send(bytes);
+  }
 }
 
 function handleRelayMessage(data) {
-  // Phase 3: crypto handshake + login will be handled here
-  // For now, parse as Message proto and dispatch
   try {
+    if (sessionState.secured) {
+      sessionState.encSeqRecv++;
+      const nonce = getNonce(sessionState.encSeqRecv);
+      const decrypted = nacl.secretbox.open(data, nonce, sessionState.sessionKey);
+      if (!decrypted) {
+        console.error('[WebBridge] Decryption failed');
+        return;
+      }
+      data = decrypted;
+    }
     const msg = parseRendezvousFields(data);
-    // field 9 = Hash, field 25 = PeerInfo, field 6 = VideoFrame, etc.
-    // Will be implemented in Phase 3
-  } catch(e) {}
+
+    if (msg[MSG_MSG.SIGNED_ID]) {
+      handleSignedId(msg[MSG_MSG.SIGNED_ID]);
+    } else if (msg[MSG_MSG.HASH]) {
+      handleHash(msg[MSG_MSG.HASH]);
+    } else if (msg[MSG_MSG.LOGIN_RESPONSE]) {
+      handleLoginResponse(msg[MSG_MSG.LOGIN_RESPONSE]);
+    }
+  } catch(e) {
+    console.error('[WebBridge] relay message error:', e);
+  }
+}
+
+function handleSignedId(signedIdBytes) {
+  clearTimeout(sessionState.relayTimeout);
+  if (!sessionState.signPk) {
+    console.warn('[WebBridge] No signPk, falling back to non-secure');
+    relaySend(wrapMsg(MSG_MSG.PUBLIC_KEY, new Uint8Array(0)));
+    return;
+  }
+  let idPkBytes;
+  try {
+    idPkBytes = nacl.sign.open(signedIdBytes, sessionState.signPk);
+  } catch(e) {
+    console.warn('[WebBridge] Signature verification error, falling back:', e);
+    relaySend(wrapMsg(MSG_MSG.PUBLIC_KEY, new Uint8Array(0)));
+    return;
+  }
+  if (!idPkBytes) {
+    console.warn('[WebBridge] pk mismatch, falling back to non-secure');
+    relaySend(wrapMsg(MSG_MSG.PUBLIC_KEY, new Uint8Array(0)));
+    return;
+  }
+  const idPk = parseRendezvousFields(idPkBytes);
+  const peerId = idPk[1] ? new TextDecoder().decode(idPk[1]) : '';
+  const theirPkB = idPk[2];
+  if (peerId !== sessionState.peerId || !theirPkB || theirPkB.length !== 32) {
+    console.warn('[WebBridge] sign failure (id/pk mismatch), falling back to non-secure');
+    relaySend(wrapMsg(MSG_MSG.PUBLIC_KEY, new Uint8Array(0)));
+    return;
+  }
+  const kp = nacl.box.keyPair();
+  const symKey = nacl.randomBytes(32);
+  const nonce = new Uint8Array(32);
+  const sealedKey = nacl.box(symKey, nonce, theirPkB, kp.secretKey);
+  const pkInner = pbConcat(pbBytes(1, kp.publicKey), pbBytes(2, sealedKey));
+  relaySend(wrapMsg(MSG_MSG.PUBLIC_KEY, pkInner));
+  sessionState.sessionKey = symKey;
+  sessionState.encSeqSend = 0n;
+  sessionState.encSeqRecv = 0n;
+  sessionState.secured = true;
+  console.log('[WebBridge] Encryption enabled');
+}
+
+function handleHash(hashBytes) {
+  const hf = parseRendezvousFields(hashBytes);
+  const salt = hf[1] ? new TextDecoder().decode(hf[1]) : '';
+  const challenge = hf[2] ? new TextDecoder().decode(hf[2]) : '';
+  sessionState.hashSalt = salt;
+  sessionState.hashChallenge = challenge;
+  const pwd = sessionState.loginPassword || sessionState.password;
+  let hashPwd;
+  if (pwd) {
+    hashPwd = sha256(new Uint8Array([...sha256(new TextEncoder().encode(pwd)), ...new TextEncoder().encode(salt)]));
+    hashPwd = sha256(new Uint8Array([...hashPwd, ...new TextEncoder().encode(challenge)]));
+  } else {
+    hashPwd = new Uint8Array(0);
+  }
+  sendLoginRequest(hashPwd);
+  if (!pwd) {
+    fireSessionEvent('msgbox', JSON.stringify({ type: 'input-password', title: 'Password Required', text: '', link: '' }));
+  }
+}
+
+function sendLoginRequest(hashPwd) {
+  const myId = localStorage.getItem('id') || '';
+  const inner = pbConcat(
+    pbString(1, sessionState.peerId),
+    pbBytes(2, hashPwd),
+    pbString(4, myId),
+    pbString(11, VERSION)
+  );
+  let connInner;
+  if (sessionState.isFileTransfer) {
+    connInner = pbConcat(inner, pbBytes(7, new Uint8Array(0)));
+  } else if (sessionState.isViewCamera) {
+    connInner = pbConcat(inner, pbBytes(15, new Uint8Array(0)));
+  } else if (sessionState.isTerminal) {
+    connInner = pbConcat(inner, pbBytes(16, new Uint8Array(0)));
+  } else {
+    connInner = inner;
+  }
+  relaySend(wrapMsg(MSG_MSG.LOGIN_REQUEST, connInner));
+}
+
+function handleLoginResponse(lrBytes) {
+  const lr = parseRendezvousFields(lrBytes);
+  if (lr[1] instanceof Uint8Array && lr[1].length > 0) {
+    sessionFail(new TextDecoder().decode(lr[1]));
+  } else if (lr[2]) {
+    console.log('[WebBridge] Login successful');
+    fireSessionEvent('callback_msgbox', JSON.stringify({ type: 'info', detail: 'Connected' }));
+  }
 }
 
 // --- Public API ---
@@ -720,7 +1051,16 @@ window.setByName = function(name, value) {
         return '';
       }
       case 'login': {
-        // Phase 3: send login credentials after crypto handshake
+        try {
+          const obj = JSON.parse(value);
+          sessionState.loginPassword = obj.password || '';
+          if (sessionState.hashChallenge && sessionState.secured) {
+            const pwd = sessionState.loginPassword;
+            let hashPwd = sha256(new Uint8Array([...sha256(new TextEncoder().encode(pwd)), ...new TextEncoder().encode(sessionState.hashSalt)]));
+            hashPwd = sha256(new Uint8Array([...hashPwd, ...new TextEncoder().encode(sessionState.hashChallenge)]));
+            sendLoginRequest(hashPwd);
+          }
+        } catch(e) {}
         return '';
       }
       case 'send_2fa': {
