@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 if [ "$1" == "android" ]; then
     flutter/ndk_arm64.sh
     cp target/aarch64-linux-android/release/liblibrustdesk.so flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
@@ -7,4 +7,13 @@ if [ "$1" == "android" ]; then
 elif [ "$1" == "linux" ]; then
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
     python3 ./build.py --flutter --skip-cargo
+elif [ "$1" == "web" ]; then
+    rm -rf flutter/build/web/*
+    pushd libs/web_bridge
+    wasm-pack build --release --target web --out-dir ../../flutter/web/pkg
+    popd
+    python3 ./extract_translations.py
+    pushd flutter
+    flutter build web --release
+    popd
 fi

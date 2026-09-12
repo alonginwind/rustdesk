@@ -32,6 +32,13 @@
 /build/
 
 # Web related
+# Both negations are load-bearing: the root .gitignore drops every *png, so without them the
+# favicon and the icons would stay untracked.
+!web/*
+!web/icons/*
+web/load_bridge.js
+# wasm-pack output, rebuilt by `run.sh web`
+web/pkg/
 
 # Symbolication related
 app.*.symbols
