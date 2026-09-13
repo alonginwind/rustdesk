@@ -211,7 +211,10 @@ android-wakelock = { git = "https://github.com/rustdesk-org/android-wakelock" }
 
 [workspace]
 members = ["libs/scrap", "libs/hbb_common", "libs/base", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer"]
-exclude = ["vdi/host"]
+# web_bridge is wasm32-only and is not a dependency of anything here, but it sits under the
+# workspace root, so cargo assumes it is a member and refuses to build it otherwise. Keeping it
+# out also leaves the host/Android builds untouched and preserves its own size-oriented profile.
+exclude = ["vdi/host", "libs/web_bridge"]
 
 # Patch libxdo-sys to use a stub implementation that doesn't require libxdo
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)

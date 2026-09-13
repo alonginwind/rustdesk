@@ -32,6 +32,8 @@
 /build/
 
 # Web related
+!web/*
+!web/icons/*
 
 # Symbolication related
 app.*.symbols
