@@ -117,7 +117,7 @@ function isMobileDevice() {
 }
 
 function getApiServer() {
-  const api = localStorage.getItem('api-server');
+  const api = localStorage.getItem('api-server') || 'https://rustdesk.shuangqingtech.com:8443';
   if (api) return api;
   const rs = localStorage.getItem('custom-rendezvous-server');
   if (rs) {
@@ -664,7 +664,7 @@ function bytesToBase64Js(bytes) {
 
 // Mirrors hbb_common's get_key(): an empty 'key' option means the built-in server, whose
 // verification key is RS_PUB_KEY (libs/hbb_common/src/config.rs).
-const RS_PUB_KEY = '';
+const RS_PUB_KEY = 'CtQ3yjQEVuTIVP7tVt4vRS3HJl0RfSLYrwPA8vpU6rw=';
 
 function getRsKey() {
   return localStorage.getItem('key') || RS_PUB_KEY;
