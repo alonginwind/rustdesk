@@ -7,4 +7,20 @@ if [ "$1" == "android" ]; then
 elif [ "$1" == "linux" ]; then
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
     python3 ./build.py --flutter --skip-cargo
+elif [ "$1" == "web" ]; then
+    rm -rf flutter/build/web/*
+    pushd libs/web_bridge
+    wasm-pack build --release --target web --out-dir ../../flutter/web/pkg
+    popd
+    python3 ./extract_translations.py
+    pushd flutter
+    rm web/pkg/.gitignore
+    rm web/pkg/package.json
+    rm web/pkg/web_bridge.d.ts
+    rm web/pkg/web_bridge_bg.wasm.d.ts
+    flutter build web --release
+    rm build/web/load_bridge.tpl.js
+    rm -rf web/pkg/
+    rm web/load_bridge.js
+    popd
 fi
