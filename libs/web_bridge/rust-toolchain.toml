@@ -1,0 +1,5 @@
+[toolchain]
+# The repository default is pinned to 1.75 for the native/Android builds; this crate is
+# excluded from the workspace and needs a current stable for its wasm dependency tree.
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]
