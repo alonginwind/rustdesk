@@ -1911,7 +1911,7 @@ class RustdeskImpl {
   }
 
   String? sessionGetConnToken({required UuidValue sessionId, dynamic hint}) {
-    throw UnimplementedError("sessionGetConnToken");
+    return null;
   }
 
   String mainGetPrinterNames({dynamic hint}) {

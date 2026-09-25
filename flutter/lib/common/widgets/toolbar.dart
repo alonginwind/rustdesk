@@ -586,7 +586,7 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         connToken: connToken);
   }
 
-  if (isDefaultConn && isDesktop) {
+  if (isDefaultConn && (isDesktop || isWebDesktop)) {
     v.add(
       TTextMenu(
           child: Text(translate('Transfer file')),
@@ -594,18 +594,20 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
     );
     v.add(
       TTextMenu(
-          child: Text(translate('View camera')),
-          onPressed: () => connectWithToken(isViewCamera: true)),
-    );
-    v.add(
-      TTextMenu(
           child: Text('${translate('Terminal')} (beta)'),
           onPressed: () => connectWithToken(isTerminal: true)),
     );
+  }
+  if (isDefaultConn && isDesktop) {
     v.add(
       TTextMenu(
           child: Text(translate('TCP tunneling')),
           onPressed: () => connectWithToken(isTcpTunneling: true)),
+    );
+    v.add(
+      TTextMenu(
+          child: Text(translate('View camera')),
+          onPressed: () => connectWithToken(isViewCamera: true)),
     );
   }
   // note
