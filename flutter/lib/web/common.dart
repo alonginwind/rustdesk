@@ -1,3 +1,4 @@
+import 'dart:html' as html;
 import 'dart:js' as js;
 // cycle imports, maybe we can improve this
 import 'package:flutter_hbb/consts.dart';
@@ -16,3 +17,7 @@ final _localOs = js.context.callMethod('getByName', ['local_os', '']);
 final isWebOnWindows_ = _localOs == kPeerPlatformWindows;
 final isWebOnLinux_ = _localOs == kPeerPlatformLinux;
 final isWebOnMacOS_ = _localOs == kPeerPlatformMacOS;
+
+void openUrl(String url) {
+  html.window.open(url, '_blank');
+}
