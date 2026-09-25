@@ -249,7 +249,8 @@ class WebHomePage extends StatelessWidget {
         isFileTransfer: isFileTransfer, 
         isViewCamera: isViewCamera, 
         isTerminal: isTerminal,
-        password: password);
+        password: password,
+        openInNewTab: false);
     }
   }
 }
