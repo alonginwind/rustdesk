@@ -2578,7 +2578,8 @@ connect(BuildContext context, String id,
     bool forceRelay = false,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    bool openInNewTab = true}) async {
   if (id == '') return;
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
@@ -2628,7 +2629,9 @@ connect(BuildContext context, String id,
     }
   } else {
     if (isFileTransfer) {
-      if (isWeb) {
+      if (isWeb && openInNewTab) {
+        openUrl('${Uri.base}#/file-transfer/$id');
+      } else if (isWeb) {
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -2679,17 +2682,21 @@ connect(BuildContext context, String id,
         );
       }
     } else if (isTerminal) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (BuildContext context) => TerminalPage(
-            id: id,
-            password: password,
-            isSharedPassword: isSharedPassword,
-            forceRelay: forceRelay,
+      if (isWeb && openInNewTab) {
+        openUrl('${Uri.base}#/terminal/$id');
+      } else {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (BuildContext context) => TerminalPage(
+              id: id,
+              password: password,
+              isSharedPassword: isSharedPassword,
+              forceRelay: forceRelay,
+            ),
           ),
-        ),
-      );
+        );
+      }
     } else {
       if (isWeb) {
         Navigator.push(

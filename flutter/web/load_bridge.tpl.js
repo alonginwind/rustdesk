@@ -2269,6 +2269,13 @@ function getWebDisplayName() {
       if (name) return name;
     }
   } catch(e) {}
+  try {
+    const src = localStorage.getItem('option:local:share_source');
+    if (src) {
+      pendingRemember = true;
+      return src;
+    }
+  } catch(e) {}
   return '';
 }
 
