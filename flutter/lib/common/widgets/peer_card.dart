@@ -131,6 +131,16 @@ class _PeerCardState extends State<_PeerCard>
     return peerTabShowNote(widget.tab) && peer.note.isNotEmpty;
   }
 
+  String _buildPeerTooltipMessage(Peer peer, String name) {
+    final aliasOrId = peer.alias.isEmpty ? formatID(peer.id) : peer.alias;
+    final parts = [aliasOrId, if (name.isNotEmpty) name];
+    var msg = parts.join('\n');
+    if (peer.tags.isNotEmpty) {
+      msg += '\n${translate('Tags')}: ${peer.tags.join(', ')}';
+    }
+    return msg;
+  }
+
   makeChild(bool isPortrait, Peer peer) {
     final name = hideUsernameOnCard == true
         ? peer.hostname
@@ -194,17 +204,13 @@ class _PeerCardState extends State<_PeerCard>
                       Row(
                         children: [
                           Flexible(
-                            child: Tooltip(
-                              message: name,
-                              waitDuration: const Duration(seconds: 1),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  name,
-                                  style: isPortrait ? null : greyStyle,
-                                  textAlign: TextAlign.start,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                name,
+                                style: isPortrait ? null : greyStyle,
+                                textAlign: TextAlign.start,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ),
@@ -248,15 +254,17 @@ class _PeerCardState extends State<_PeerCard>
       BuildContext context, Peer peer, Rx<BoxDecoration?>? deco) {
     hideUsernameOnCard ??=
         bind.mainGetBuildinOption(key: kHideUsernameOnCard) == 'Y';
+    final name = hideUsernameOnCard == true
+        ? peer.hostname
+        : '${peer.username}${peer.username.isNotEmpty && peer.hostname.isNotEmpty ? '@' : ''}${peer.hostname}';
     final colors = _frontN(peer.tags, 25)
         .map((e) => gFFI.abModel.getCurrentAbTagColor(e))
         .toList();
     return Tooltip(
       message: !(isDesktop || isWebDesktop)
           ? ''
-          : peer.tags.isNotEmpty
-              ? '${translate('Tags')}: ${peer.tags.join(', ')}'
-              : '',
+          : _buildPeerTooltipMessage(peer, name),
+      waitDuration: const Duration(milliseconds: 100),
       child: Stack(children: [
         Obx(
           () => deco == null
@@ -302,25 +310,26 @@ class _PeerCardState extends State<_PeerCard>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Expanded(
-                  child: Container(
-                    color: str2color('${peer.id}${peer.platform}', 0x7f),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(6),
-                                child:
-                                    getPlatformImage(peer.platform, size: 60),
-                              ),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Tooltip(
-                                      message: name,
-                                      waitDuration: const Duration(seconds: 1),
+                  child: Tooltip(
+                    message: _buildPeerTooltipMessage(peer, name),
+                    waitDuration: const Duration(milliseconds: 100),
+                    preferBelow: false,
+                    child: Container(
+                      color: str2color('${peer.id}${peer.platform}', 0x7f),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  child:
+                                      getPlatformImage(peer.platform, size: 60),
+                                ),
+                                Row(
+                                  children: [
+                                    Expanded(
                                       child: Text(
                                         name,
                                         style: const TextStyle(
@@ -330,31 +339,31 @@ class _PeerCardState extends State<_PeerCard>
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              if (_showNote(peer))
-                                Row(
-                                  children: [
-                                    Expanded(
-                                        child: Tooltip(
-                                      message: peer.note,
-                                      waitDuration: const Duration(seconds: 1),
-                                      child: Text(
-                                        peer.note,
-                                        style: const TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 10),
-                                        textAlign: TextAlign.center,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ))
                                   ],
                                 ),
-                            ],
-                          ).paddingOnly(top: 4.0, left: 4.0, right: 4.0),
-                        ),
-                      ],
+                                if (_showNote(peer))
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                          child: Tooltip(
+                                        message: peer.note,
+                                        waitDuration: const Duration(seconds: 1),
+                                        child: Text(
+                                          peer.note,
+                                          style: const TextStyle(
+                                              color: Colors.white38,
+                                              fontSize: 10),
+                                          textAlign: TextAlign.center,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ))
+                                    ],
+                                  ),
+                              ],
+                            ).paddingOnly(top: 4.0, left: 4.0, right: 4.0),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -387,12 +396,8 @@ class _PeerCardState extends State<_PeerCard>
     final colors = _frontN(peer.tags, 25)
         .map((e) => gFFI.abModel.getCurrentAbTagColor(e))
         .toList();
-    return Tooltip(
-      message: peer.tags.isNotEmpty
-          ? '${translate('Tags')}: ${peer.tags.join(', ')}'
-          : '',
-      child: Stack(children: [
-        child,
+    return Stack(children: [
+      child,
         if (_shouldBuildPasswordIcon(peer))
           Positioned(
             top: 4,
@@ -407,8 +412,7 @@ class _PeerCardState extends State<_PeerCard>
               painter: TagPainter(radius: 4, colors: colors),
             ),
           )
-      ]),
-    );
+      ]);
   }
 
   List _frontN<T>(List list, int n) {
