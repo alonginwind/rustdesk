@@ -2609,7 +2609,8 @@ connect(BuildContext context, String id,
     String? password,
     String? connToken,
     bool? isSharedPassword,
-    String loginMethod = ''}) async {
+    String loginMethod = '',
+    bool openInNewTab = true}) async {
   if (id == '') return;
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
@@ -2662,17 +2663,21 @@ connect(BuildContext context, String id,
   } else {
     if (isFileTransfer) {
       if (isWeb) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (BuildContext context) =>
-                desktop_file_manager.FileManagerPage(
-                    id: id,
-                    loginMethod: loginMethod,
-                    password: password,
-                    isSharedPassword: isSharedPassword),
-          ),
-        );
+        if (openInNewTab) {
+          openUrl('${Uri.base}#/file-transfer/$id');
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (BuildContext context) =>
+                  desktop_file_manager.FileManagerPage(
+                      id: id,
+                      loginMethod: loginMethod,
+                      password: password,
+                      isSharedPassword: isSharedPassword),
+            ),
+          );
+        }
       } else {
         Navigator.push(
           context,
@@ -2716,18 +2721,22 @@ connect(BuildContext context, String id,
         );
       }
     } else if (isTerminal) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (BuildContext context) => TerminalPage(
-            id: id,
-            loginMethod: loginMethod,
-            password: password,
-            isSharedPassword: isSharedPassword,
-            forceRelay: forceRelay,
+      if (isWeb && openInNewTab) {
+        openUrl('${Uri.base}#/terminal/$id');
+      } else {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (BuildContext context) => TerminalPage(
+              id: id,
+              loginMethod: loginMethod,
+              password: password,
+              isSharedPassword: isSharedPassword,
+              forceRelay: forceRelay,
+            ),
           ),
-        ),
-      );
+        );
+      }
     } else {
       if (isWeb) {
         Navigator.push(

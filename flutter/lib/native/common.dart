@@ -13,3 +13,5 @@ final isDesktop_ = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 final isWebOnWindows_ = false;
 final isWebOnLinux_ = false;
 final isWebOnMacOS_ = false;
+
+void openUrl(String url) {}
