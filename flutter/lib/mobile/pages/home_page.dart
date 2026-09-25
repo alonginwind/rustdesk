@@ -254,7 +254,8 @@ class WebHomePage extends StatelessWidget {
         isViewCamera: isViewCamera, 
         isTerminal: isTerminal,
         loginMethod: loginMethod,
-        password: password);
+        password: password,
+        openInNewTab: false);
     }
   }
 }
