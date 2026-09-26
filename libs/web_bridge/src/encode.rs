@@ -77,6 +77,76 @@ pub fn pb_embed(field: u32, inner: &[u8]) -> Vec<u8> {
     delimited(field, inner)
 }
 
+// --- Single-call encoders ---
+// The upload loop used to make 6 wasm calls + 3 JS concat allocations per 64 KiB block
+// (pbSint32 + pbBytes + pbBool + pbConcat + pbBytes + wrapMsg). Each call allocates an
+// intermediate Vec and crosses the wasm boundary. encode_file_block builds the entire
+// FileResponse message in one Rust function with a single output Vec and one boundary
+// crossing, which matters at ~2000 blocks per 128 MiB file.
+
+fn write_delimited_to(out: &mut Vec<u8>, field: u32, payload: &[u8]) {
+    write_tag(out, field, 2);
+    write_varint(out, payload.len() as u64);
+    out.extend_from_slice(payload);
+}
+
+fn write_uint32_to(out: &mut Vec<u8>, field: u32, n: u32) {
+    write_tag(out, field, 0);
+    write_varint(out, n as u64);
+}
+
+fn write_sint32_to(out: &mut Vec<u8>, field: u32, n: i32) {
+    write_tag(out, field, 0);
+    write_varint(out, (((n as u32) << 1) ^ ((n >> 31) as u32)) as u64);
+}
+
+fn write_bool_to(out: &mut Vec<u8>, field: u32, v: bool) {
+    write_tag(out, field, 0);
+    out.push(u8::from(v));
+}
+
+/// Build a complete FileResponse(FileTransferBlock) or FileTransferDone message in one call.
+///
+/// The JS upload loop calls this once per 64 KiB block instead of making 6 separate wasm
+/// calls (pbSint32 + pbBytes + pbBool + pbConcat + pbBytes + wrapMsg) with 3 intermediate
+/// JS-side concat allocations. Single output Vec, single boundary crossing.
+///
+/// When `done` is true, `data` is ignored and the message carries only id + file_num
+/// (FileTransferDone). When false, the message carries id + file_num + data + compressed
+/// (FileTransferBlock).
+#[wasm_bindgen(js_name = encodeFileBlock)]
+pub fn encode_file_block(
+    msg_type: u32,
+    job_id: u32,
+    id_as_sint: bool,
+    file_num: i32,
+    data: &[u8],
+    done: bool,
+) -> Vec<u8> {
+    // Inner message size: id (≤6) + file_num (≤6) + data record (≤11 + data.len()) + bool (2).
+    let inner_cap = 25 + if done { 0 } else { data.len() };
+    let mut inner = Vec::with_capacity(inner_cap);
+
+    if id_as_sint {
+        write_sint32_to(&mut inner, 1, job_id as i32);
+    } else {
+        write_uint32_to(&mut inner, 1, job_id);
+    }
+    write_sint32_to(&mut inner, 2, file_num);
+
+    if !done {
+        write_delimited_to(&mut inner, 3, data);
+        write_bool_to(&mut inner, 4, false);
+    }
+
+    // Outer: wrapMsg(msg_type, inner) = tag(msg_type, wire=2) + varint(inner.len()) + inner.
+    let mut out = Vec::with_capacity(6 + inner.len());
+    write_tag(&mut out, msg_type, 2);
+    write_varint(&mut out, inner.len() as u64);
+    out.extend_from_slice(&inner);
+    out
+}
+
 // Hex and base64 encoding helpers. These run on the hot path for file transfers and terminal
 // data, where the JS byte-loop was the one part of the download path that pinned the main
 // thread; the wasm side avoids the intermediate string allocation entirely.
