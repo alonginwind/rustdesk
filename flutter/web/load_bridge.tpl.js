@@ -264,6 +264,7 @@ const MSG = {
   ONLINE_RESPONSE: 24,
   KEY_EXCHANGE: 25,
   HEALTH_CHECK: 26,
+  ICE_CANDIDATE: 29,
 };
 
 function pbRawTag(field, wireType) {
@@ -828,7 +829,25 @@ let sessionState = {
   keepAliveTimer: null,
   displayWidth: 0,
   displayHeight: 0,
-  loggedIn: false
+  loggedIn: false,
+  // WebRTC state
+  pc: null,
+  dataChannel: null,
+  webrtcSessionKey: '',
+  webrtcConnected: false,
+  webrtcOffer: '',
+  webrtcAnswerPending: false,
+  dcRecvAcc: null,
+  // True when the data channel has taken over from a failed relay WS.
+  dcTransport: false,
+  // Promise for the in-flight offer creation, so concurrent callers share it.
+  _offerPromise: null,
+  // Timer for the preference window (delays relay to let DC win P2P).
+  _preferenceTimer: null,
+  // Timers for pending ICE candidate resends.
+  _iceResendTimers: [],
+  // Remote trickle ICE candidates received before the SDP answer.
+  _pendingRemoteIceCandidates: [],
 };
 
 function getRelayWsUrl(relayServer) {
@@ -845,6 +864,385 @@ function getRelayWsUrl(relayServer) {
   } else {
     return `${secure ? 'wss' : 'ws'}://${url.hostname}:${wsPort}/ws/relay`;
   }
+}
+
+// --- WebRTC (controller / offerer only) ---
+// The browser's RTCPeerConnection creates a P2P data channel as an alternative to the relay
+// WebSocket. The native controlled side always acts as answerer; the web client is always the
+// offerer. ICE candidates trickle through the rendezvous WebSocket (hbbs must support
+// IceCandidate forwarding). If WebRTC fails, the relay WebSocket connects as usual.
+
+// SCTP data-channel fragmentation mirrors libs/hbb_common/src/webrtc.rs: each logical message
+// is split into 60000-byte fragments prefixed by a single byte — FRAG_MORE (1) or FRAG_END (0).
+const WEBRTC_FRAG_MORE = 1;
+const WEBRTC_FRAG_END = 0;
+const WEBRTC_MAX_FRAG_PAYLOAD = 60000;
+// Default preference window (mirrors native RELAY_FALLBACK_DELAY_MS in src/client.rs).
+// The user can override this via the "relay-fallback-delay" setting (in seconds).
+const WEBRTC_PREFERENCE_WINDOW_DEFAULT_MS = 2500;
+// Mirrors native WEBRTC_ICE_RESEND_DELAY: the rendezvous hop to the peer can be UDP, so a
+// candidate may be lost in flight. The remote ICE agent deduplicates, so one resend is free.
+const WEBRTC_ICE_RESEND_DELAY_MS = 400;
+
+// Default STUN servers, mirroring DEFAULT_ICE_SERVERS in libs/hbb_common/src/webrtc.rs.
+// Four anycast/unicast entries: the 443 port covers networks that only allow HTTPS UDP.
+const DEFAULT_ICE_SERVERS = [
+  'stun:stun.cloudflare.com:3478',
+  'stun:stun.l.google.com:19302',
+  'stun:stun.antisip.com:3478',
+  'stun:stun.nextcloud.com:443',
+];
+
+// Read the relay-fallback-delay setting (seconds) from localStorage, matching native
+// relay_fallback_delay_ms() in src/client.rs. Returns milliseconds.
+function getRelayFallbackDelayMs() {
+  const raw = localStorage.getItem('option:local:relay-fallback-delay') || '';
+  const secs = parseFloat(raw.trim());
+  if (isFinite(secs) && secs > 0) {
+    return Math.round(secs * 1000);
+  }
+  return WEBRTC_PREFERENCE_WINDOW_DEFAULT_MS;
+}
+
+// Build the ICE server list for RTCPeerConnection, mirroring parse_ice_servers() in
+// libs/hbb_common/src/webrtc.rs: parse user config, and if no STUN server is present
+// (empty config or TURN-only), prepend DEFAULT_ICE_SERVERS so ICE always has host
+// candidates to probe.
+function getWebRtcIceServers() {
+  const cfg = localStorage.getItem('ice-servers') || '';
+  const servers = [];
+  let hasStun = false;
+  for (const url of cfg.split(',').map(s => s.trim()).filter(Boolean)) {
+    if (/^stuns?:/i.test(url)) hasStun = true;
+    servers.push({ urls: [url] });
+  }
+  if (!hasStun) {
+    servers.unshift({ urls: DEFAULT_ICE_SERVERS });
+  }
+  return servers;
+}
+
+// Extract the DTLS fingerprint from an SDP text — it is the session_key both peers use to
+// match ICE candidates (webrtc.rs::get_key_for_sdp).
+function extractSdpFingerprint(sdpText) {
+  if (!sdpText) return '';
+  const lines = sdpText.split(/\r?\n/);
+  for (const line of lines) {
+    if (line.startsWith('a=fingerprint:')) {
+      return line.substring('a=fingerprint:'.length).trim();
+    }
+  }
+  return '';
+}
+
+// Encode a local SDP into the webrtc:// envelope the native side expects. The envelope is a
+// base64(JSON({type, sdp, ice_policy})) prefixed with "webrtc://" (webrtc.rs::encode_endpoint).
+function encodeWebRtcEndpoint(sdpType, sdpText, icePolicyAll) {
+  const cleanSdp = sdpText.replace(/\r?\n/g, '\r\n');
+  const envelope = { type: sdpType, sdp: cleanSdp };
+  if (icePolicyAll) envelope.ice_policy = 'all';
+  const json = JSON.stringify(envelope);
+  const b64 = btoa(json);
+  return 'webrtc://' + b64;
+}
+
+// Decode a webrtc:// envelope back to {type, sdp}.
+function decodeWebRtcEndpoint(endpoint) {
+  if (!endpoint || !endpoint.startsWith('webrtc://')) return null;
+  try {
+    const b64 = endpoint.substring('webrtc://'.length);
+    const json = atob(b64);
+    return JSON.parse(json);
+  } catch(e) {
+    console.warn('[WebRTC] failed to decode endpoint:', e);
+    return null;
+  }
+}
+
+// Build the RTCPeerConnection, create an offer, and store it in sessionState.
+// Returns a promise that resolves to the encoded offer string, or '' on failure.
+async function createWebRtcOffer() {
+  if (typeof RTCPeerConnection === 'undefined') {
+    console.warn('[WebRTC] RTCPeerConnection not available in this browser');
+    return '';
+  }
+  // Check if WebRTC P2P is enabled (mirrors native get_webrtc_enabled).
+  // option2bool for 'enable-*' keys: value != 'N' means enabled.
+  const webrtcEnabled = localStorage.getItem('option:local:enable-webrtc') !== 'N';
+  if (!webrtcEnabled) {
+    console.log('[WebRTC] disabled by user setting (enable-webrtc=N)');
+    return '';
+  }
+  try {
+    const config = { iceServers: getWebRtcIceServers() };
+    const pc = new RTCPeerConnection(config);
+    sessionState.pc = pc;
+
+    // Trickle ICE: send each local candidate to the peer via the rendezvous WS as it arrives.
+    pc.onicecandidate = (e) => {
+      if (e.candidate && e.candidate.candidate) {
+        const json = JSON.stringify(e.candidate.toJSON());
+        dbg('[WebRTC] local ICE candidate:', json.substring(0, 60) + '...');
+        sendWebRtcIceCandidate(json);
+      }
+    };
+    pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] connection state:', pc.connectionState);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        sessionState.webrtcConnected = false;
+      }
+    };
+
+    // Create a data channel with the same ordered+reliable defaults the native side expects.
+    const dc = pc.createDataChannel('rustdesk', { ordered: true });
+    setupDataChannel(dc);
+
+    const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+    await pc.setLocalDescription(offer);
+
+    const fingerprint = extractSdpFingerprint(offer.sdp);
+    sessionState.webrtcSessionKey = fingerprint;
+    // The web client connects over WebSocket (policy relay) but ICE opens its own UDP sockets
+    // and may still go direct — that is the only P2P path ws deployments have.
+    const endpoint = encodeWebRtcEndpoint(offer.type, offer.sdp, true);
+    sessionState.webrtcOffer = endpoint;
+    console.log('[WebRTC] offer created, fingerprint:', fingerprint ? fingerprint.substring(0, 20) + '...' : '(empty)',
+                'endpoint bytes:', endpoint.length);
+    return endpoint;
+  } catch(e) {
+    console.warn('[WebRTC] offer creation failed:', e);
+    cleanupWebRtc();
+    return '';
+  }
+}
+
+// Apply the remote SDP answer from the controlled side.
+async function setWebRtcAnswer(answerEndpoint) {
+  const pc = sessionState.pc;
+  if (!pc) { console.warn('[WebRTC] no peer connection for answer'); return false; }
+  try {
+    const decoded = decodeWebRtcEndpoint(answerEndpoint);
+    if (!decoded) { console.warn('[WebRTC] invalid answer endpoint'); return false; }
+    await pc.setRemoteDescription(decoded);
+    console.log('[WebRTC] remote answer applied');
+    const pending = sessionState._pendingRemoteIceCandidates;
+    sessionState._pendingRemoteIceCandidates = [];
+    for (const candidateStr of pending) {
+      await addRemoteIceCandidate(pc, candidateStr);
+    }
+    return true;
+  } catch(e) {
+    console.warn('[WebRTC] failed to apply answer:', e);
+    return false;
+  }
+}
+
+// Send a local ICE candidate to the peer via the rendezvous WebSocket.
+// The candidate is also scheduled for a single resend after WEBRTC_ICE_RESEND_DELAY_MS,
+// matching the native side's trickle-ICE resend logic (src/client.rs).
+function sendWebRtcIceCandidate(candidateStr) {
+  const rzWs = sessionState.rzWs;
+  if (!rzWs || rzWs.readyState !== WebSocket.OPEN) return;
+  if (!sessionState.webrtcSessionKey) return;
+  try {
+    const iceInner = pbConcat(
+      pbString(1, sessionState.peerId),
+      pbString(3, sessionState.webrtcSessionKey),
+      pbString(4, candidateStr)
+    );
+    const iceMsg = wrapRendezvous(MSG.ICE_CANDIDATE, iceInner);
+    rzWs.send(iceMsg);
+    dbg('[WebRTC] ICE candidate sent:', candidateStr.substring(0, 60) + '...');
+    // Schedule a single resend: the rendezvous hop to the peer may be UDP and the first
+    // copy can be lost; the remote ICE agent deduplicates repeats.
+    const timer = setTimeout(() => {
+      const idx = sessionState._iceResendTimers.indexOf(timer);
+      if (idx >= 0) sessionState._iceResendTimers.splice(idx, 1);
+      if (sessionState.closed) return;
+      const ws = sessionState.rzWs;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(iceMsg);
+        dbg('[WebRTC] ICE candidate resent:', candidateStr.substring(0, 60) + '...');
+      } catch(e) {
+        console.warn('[WebRTC] ICE candidate resend failed:', e);
+      }
+    }, WEBRTC_ICE_RESEND_DELAY_MS);
+    sessionState._iceResendTimers.push(timer);
+  } catch(e) {
+    console.warn('[WebRTC] failed to send ICE candidate:', e);
+  }
+}
+
+function addRemoteIceCandidate(pc, candidateStr) {
+  try {
+    // The native side serialises candidates as JSON (RTCIceCandidateInit).
+    return pc.addIceCandidate(JSON.parse(candidateStr)).catch(e => {
+      console.warn('[WebRTC] addIceCandidate failed:', e);
+    });
+  } catch(e) {
+    // Some older hbbs builds may send the candidate as a plain SDP string.
+    return pc.addIceCandidate({ candidate: candidateStr, sdpMid: '0', sdpMLineIndex: 0 }).catch(e2 => {
+      console.warn('[WebRTC] addIceCandidate (fallback) failed:', e2);
+    });
+  }
+}
+
+// Handle a remote ICE candidate from the peer (received via rendezvous WS).
+function handleRemoteIceCandidate(candidateStr) {
+  const pc = sessionState.pc;
+  if (!pc || !candidateStr) return;
+  if (!pc.remoteDescription) {
+    sessionState._pendingRemoteIceCandidates.push(candidateStr);
+    return;
+  }
+  addRemoteIceCandidate(pc, candidateStr);
+}
+
+// Wire up data channel event handlers.
+function setupDataChannel(dc) {
+  sessionState.dataChannel = dc;
+  dc.binaryType = 'arraybuffer';
+
+  dc.onopen = () => {
+    console.log('[WebRTC] data channel opened');
+    sessionState.webrtcConnected = true;
+    // Cancel the preference-window timer: the data channel won, no need to wait for relay.
+    if (sessionState._preferenceTimer) {
+      clearTimeout(sessionState._preferenceTimer);
+      sessionState._preferenceTimer = null;
+    }
+    // If the relay WS has already failed (no connection or timed out), the data channel
+    // takes over as the sole transport. The data channel uses DTLS encryption (built into
+    // WebRTC), so we don't need the secretbox security handshake.
+    if (!sessionState.relayWs || sessionState.relayWs.readyState !== WebSocket.OPEN) {
+      if (!sessionState.secured) {
+        console.log('[WebRTC] data channel is the fallback transport (relay WS failed)');
+        sessionState.dcTransport = true;
+        // Mark as secured since DTLS handles encryption for the data channel.
+        sessionState.secured = true;
+        console.log('[WebRTC] data channel using DTLS encryption (no secretbox)');
+      }
+    }
+    fireSessionEvent('connection_type', JSON.stringify({ type: 'WebRTC' }));
+  };
+
+  dc.onmessage = (e) => {
+    const data = new Uint8Array(e.data);
+    dbgFrame('WebRTC DC recv', data);
+    const msg = webrtcReassemble(data);
+    if (msg) {
+      // The data channel uses DTLS encryption (built into WebRTC), NOT secretbox.
+      // So we parse the message directly without decryption.
+      handleDataChannelMessage(msg);
+    }
+  };
+
+  dc.onerror = (e) => {
+    console.error('[WebRTC] data channel error:', e);
+  };
+
+  dc.onclose = () => {
+    console.log('[WebRTC] data channel closed');
+    sessionState.webrtcConnected = false;
+    if (!sessionState.closed) {
+      // If the relay WS is still alive, the session continues over relay.
+      if (!sessionState.relayWs || sessionState.relayWs.readyState !== WebSocket.OPEN) {
+        sessionFail('WebRTC data channel closed');
+      }
+    }
+  };
+}
+
+// Fragment a message for sending over the data channel (matches webrtc.rs::send_bytes_inner).
+function webrtcFragment(bytes) {
+  const frags = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const end = Math.min(offset + WEBRTC_MAX_FRAG_PAYLOAD, bytes.length);
+    const isLast = end >= bytes.length;
+    const chunk = bytes.slice(offset, end);
+    const framed = new Uint8Array(1 + chunk.length);
+    framed[0] = isLast ? WEBRTC_FRAG_END : WEBRTC_FRAG_MORE;
+    framed.set(chunk, 1);
+    frags.push(framed);
+    offset = end;
+  }
+  // An empty message still needs at least one FRAG_END frame.
+  if (frags.length === 0) {
+    frags.push(new Uint8Array([WEBRTC_FRAG_END]));
+  }
+  return frags;
+}
+
+// Feed incoming data-channel bytes into the reassembly buffer. Returns the complete message
+// once the final fragment arrives, or null if more fragments are expected.
+function webrtcReassemble(data) {
+  if (!data || data.length === 0) return null;
+  const header = data[0];
+  const payload = data.slice(1);
+  if (!sessionState.dcRecvAcc) {
+    sessionState.dcRecvAcc = new Uint8Array(0);
+  }
+  // Append payload to accumulator.
+  const prev = sessionState.dcRecvAcc;
+  const combined = new Uint8Array(prev.length + payload.length);
+  combined.set(prev, 0);
+  combined.set(payload, prev.length);
+  sessionState.dcRecvAcc = combined;
+
+  if (header === WEBRTC_FRAG_END) {
+    const msg = sessionState.dcRecvAcc;
+    sessionState.dcRecvAcc = null;
+    return msg;
+  }
+  // FRAG_MORE — wait for the next fragment.
+  return null;
+}
+
+// Send a RustDesk protocol message over the WebRTC data channel (with fragmentation).
+function webrtcSend(bytes) {
+  const dc = sessionState.dataChannel;
+  if (!dc || dc.readyState !== 'open') {
+    console.warn('[WebRTC] data channel not open, cannot send');
+    return false;
+  }
+  const frags = webrtcFragment(bytes);
+  for (const frag of frags) {
+    try { dc.send(frag); } catch(e) {
+      console.warn('[WebRTC] data channel send failed:', e);
+      return false;
+    }
+  }
+  return true;
+}
+
+// Tear down all WebRTC state.
+function cleanupWebRtc() {
+  if (sessionState.dataChannel) {
+    try { sessionState.dataChannel.close(); } catch(e) {}
+    sessionState.dataChannel = null;
+  }
+  if (sessionState.pc) {
+    try { sessionState.pc.close(); } catch(e) {}
+    sessionState.pc = null;
+  }
+  sessionState.webrtcSessionKey = '';
+  sessionState.webrtcConnected = false;
+  sessionState.webrtcOffer = '';
+  sessionState.webrtcAnswerPending = false;
+  sessionState.dcRecvAcc = null;
+  sessionState.dcTransport = false;
+  sessionState._offerPromise = null;
+  sessionState._pendingRemoteIceCandidates = [];
+  if (sessionState._preferenceTimer) {
+    clearTimeout(sessionState._preferenceTimer);
+    sessionState._preferenceTimer = null;
+  }
+  for (const t of sessionState._iceResendTimers) {
+    clearTimeout(t);
+  }
+  sessionState._iceResendTimers = [];
 }
 
 function fireSessionEvent(name, data) {
@@ -1102,6 +1500,7 @@ function closeSession() {
   closeSessionSocket('rzRegWs');
   closeSessionSocket('rzWs');
   closeSessionSocket('relayWs');
+  cleanupWebRtc();
   sessionState.sessionKey = null;
   sessionState.encSeqSend = 0n;
   sessionState.encSeqRecv = 0n;
@@ -1264,20 +1663,33 @@ function startSessionConnection(peerId, connType, password, isFileTransfer, isVi
     sendPunchHoleRequest();
   };
 
-  function sendPunchHoleRequest() {
+  async function sendPunchHoleRequest() {
+    // Create the WebRTC offer on the first call; re-use it on retries so the peer's cached
+    // answerer can be reused (webrtc.rs::SESSIONS deduplicates by fingerprint).
+    if (!sessionState.webrtcOffer) {
+      if (!sessionState._offerPromise) {
+        sessionState._offerPromise = createWebRtcOffer();
+      }
+      await sessionState._offerPromise;
+    }
     const key = getRsKey();
     const token = localStorage.getItem('option:local:access_token') || '';
     console.log('[WebBridge] PunchHoleRequest key:', key ? key.substring(0, 8) + '...' : '(empty)',
-                'keyLen:', key.length, 'token:', token ? 'present' : '(empty)');
-    const punchInner = pbConcat(
+                'keyLen:', key.length, 'token:', token ? 'present' : '(empty)',
+                'webrtcOffer:', sessionState.webrtcOffer ? sessionState.webrtcOffer.length + ' bytes' : 'none');
+    const punchFields = [
       pbString(1, peerId),
       pbUint32(2, NAT_TYPE_SYMMETRIC),
       pbString(3, key),
       pbUint32(4, connType),
       pbString(5, token),
       pbString(6, VERSION),
-      pbBool(8, true)
-    );
+      pbBool(8, true),
+    ];
+    if (sessionState.webrtcOffer) {
+      punchFields.push(pbString(12, sessionState.webrtcOffer));
+    }
+    const punchInner = pbConcat(...punchFields);
     const punchMsg = wrapRendezvous(MSG.PUNCH_HOLE_REQUEST, punchInner);
     ws.send(punchMsg);
     console.log('[WebBridge] PunchHoleRequest sent, peerId:', peerId, 'bytes:', punchMsg.length);
@@ -1338,6 +1750,15 @@ function startSessionConnection(peerId, connType, password, isFileTransfer, isVi
                       'relayServer=', sessionState.relayServer,
                       'hasPk=', rr[5] instanceof Uint8Array, 'pkLen=', rr[5] instanceof Uint8Array ? rr[5].length : 0,
                       'signPk=', sessionState.signPk ? 'extracted' : 'null');
+          // Field 12 carries the WebRTC SDP answer when the controlled side created one.
+          const webrtcAnswer = rr[12] instanceof Uint8Array ? new TextDecoder().decode(rr[12]) : '';
+          if (webrtcAnswer && sessionState.pc) {
+            console.log('[WebRTC] rendezvous RelayResponse carries SDP answer,', webrtcAnswer.length, 'bytes');
+            (async () => {
+              const ok = await setWebRtcAnswer(webrtcAnswer);
+              if (ok) sessionState.webrtcAnswerPending = false;
+            })();
+          }
           connectRelay();
         } else if (outer[MSG.REGISTER_PEER_RESPONSE]) {
           const rpr = parseRendezvousFields(outer[MSG.REGISTER_PEER_RESPONSE]);
@@ -1380,6 +1801,16 @@ function startSessionConnection(peerId, connType, password, isFileTransfer, isVi
           } else {
             dbg('[WebBridge] RegisterPk OK, sending PunchHoleRequest');
             sendPunchHoleRequest();
+          }
+        } else if (outer[MSG.ICE_CANDIDATE]) {
+          // Trickle ICE: the controlled side's local ICE candidates forwarded by hbbs.
+          const ice = parseRendezvousFields(outer[MSG.ICE_CANDIDATE]);
+          const iceSessionKey = ice[3] instanceof Uint8Array ? new TextDecoder().decode(ice[3]) : '';
+          const iceCandidate = ice[4] instanceof Uint8Array ? new TextDecoder().decode(ice[4]) : '';
+          if (iceSessionKey === sessionState.webrtcSessionKey && iceCandidate) {
+            handleRemoteIceCandidate(iceCandidate);
+          } else {
+            dbg('[WebRTC] dropped ICE candidate, key mismatch or empty');
           }
         } else {
           console.warn('[WebBridge] Unknown rendezvous response, fields:', Object.keys(outer));
@@ -1443,6 +1874,15 @@ function registerRelaySession() {
           return;
         }
         console.log('[WebBridge] Relay registration OK');
+        // Field 12 carries the WebRTC SDP answer when the controlled side created one.
+        const webrtcAnswer = rr[12] instanceof Uint8Array ? new TextDecoder().decode(rr[12]) : '';
+        if (webrtcAnswer && sessionState.pc) {
+          console.log('[WebRTC] relay registration carries SDP answer,', webrtcAnswer.length, 'bytes');
+          (async () => {
+            const ok = await setWebRtcAnswer(webrtcAnswer);
+            if (ok) sessionState.webrtcAnswerPending = false;
+          })();
+        }
         connectRelay();
       }
     } catch(err) {
@@ -1466,16 +1906,53 @@ function connectRelay() {
   console.log('[WebBridge] connectRelay: relayServer=', sessionState.relayServer, 'relayUrl=', relayUrl);
   if (!relayUrl) { sessionFail('Cannot derive relay URL'); return; }
 
+  // Preference window: if WebRTC ICE negotiation is still in flight, delay the relay WS
+  // connection by up to WEBRTC_PREFERENCE_WINDOW_MS to give the data channel a chance to
+  // open and win P2P. Mirrors native race_transports_prefer_webrtc (src/client.rs): relay
+  // TCP connect beats ICE+DTLS+SCTP by an order of magnitude, so without this window the
+  // data channel would never get picked.
+  if (sessionState.pc && !sessionState.webrtcConnected) {
+    const delayMs = getRelayFallbackDelayMs();
+    console.log('[WebRTC] preference window: delaying relay by', delayMs, 'ms');
+    sessionState._preferenceTimer = setTimeout(() => {
+      sessionState._preferenceTimer = null;
+      if (!sessionState.closed && !sessionState.webrtcConnected) {
+        openRelayWs(relayUrl);
+      }
+    }, delayMs);
+    return;
+  }
+
+  openRelayWs(relayUrl);
+}
+
+function openRelayWs(relayUrl) {
+  if (sessionState.closed) return;
+  console.log('[WebBridge] opening relay WS:', relayUrl);
+
   const ws = new WebSocket(relayUrl);
   ws.binaryType = 'arraybuffer';
   sessionState.relayWs = ws;
 
   sessionState.relayTimeout = setTimeout(() => {
+    // If the WebRTC data channel is open, the native side may have chosen WebRTC as the
+    // transport. Switch to it instead of failing.
+    if (sessionState.webrtcConnected && sessionState.dataChannel &&
+        sessionState.dataChannel.readyState === 'open' && !sessionState.secured) {
+      console.log('[WebRTC] relay timed out, switching to data channel transport');
+      sessionState.dcTransport = true;
+      return;
+    }
     sessionFail('Timeout');
   }, 15000);
 
   ws.onopen = () => {
     console.log('[WebBridge] relay WS connected');
+    // Cancel the preference timer if it is still pending.
+    if (sessionState._preferenceTimer) {
+      clearTimeout(sessionState._preferenceTimer);
+      sessionState._preferenceTimer = null;
+    }
     const key = getRsKey();
     const inner = pbConcat(
       pbString(1, sessionState.peerId),
@@ -1494,6 +1971,8 @@ function connectRelay() {
 
   ws.onmessage = (e) => {
     clearTimeout(sessionState.relayTimeout);
+    // If the data channel has taken over, ignore relay WS messages.
+    if (sessionState.dcTransport) return;
     try {
       // A WebSocket Text frame is never part of the cipher stream: WsFramedStream::next() hands
       // it over raw even when a key is armed, and only Binary goes through Encrypt::dec().
@@ -1536,6 +2015,8 @@ function connectRelay() {
   ws.onerror = (e) => {
     console.error('[WebBridge] relay WS error', e);
     clearTimeout(sessionState.relayTimeout);
+    // If the data channel has taken over, the relay WS error is expected.
+    if (sessionState.dcTransport) return;
     sessionFail('Failed to connect via relay server');
   };
 
@@ -1544,6 +2025,8 @@ function connectRelay() {
     // closeSession() sets closed before it closes the socket, so an intentional teardown
     // does not report a failure here. Anything else used to leave the UI spinning.
     if (sessionState.closed) return;
+    // If the data channel is the active transport, the relay closing is normal.
+    if (sessionState.dcTransport) return;
     sessionFail('Relay connection closed' + (e && e.code ? ` (code ${e.code})` : ''));
   };
 }
@@ -1555,6 +2038,15 @@ function wrapMsg(field, inner) {
 }
 
 function relaySend(bytes) {
+  // When the data channel has taken over as the transport (relay WS failed), send through it
+  // with the same fragmentation the native side expects (webrtc.rs::send_bytes_inner).
+  // The data channel uses DTLS encryption (built into WebRTC), NOT secretbox, so we send
+  // raw bytes with fragmentation only.
+  if (sessionState.dcTransport && sessionState.dataChannel &&
+      sessionState.dataChannel.readyState === 'open') {
+    webrtcSend(bytes);
+    return;
+  }
   sessionState.relayWs.send(sessionState.secured ? encryptFrame(bytes) : bytes);
 }
 
@@ -1572,9 +2064,12 @@ function startRelayKeepAlive() {
   }, 3000);
 }
 
-function handleRelayMessage(data) {
+// Handle a message from the relay WS or data channel.
+// If alreadyDecrypted is true, skip the secretbox decryption (used for data channel,
+// which uses DTLS encryption instead of secretbox).
+function handleRelayMessage(data, alreadyDecrypted) {
   try {
-    if (sessionState.secured) {
+    if (sessionState.secured && !alreadyDecrypted) {
       const plain = decryptFrame(data);
       if (!plain) {
         // Native lets the error escape Stream::next() and drops the connection. Reusing the same
@@ -1638,6 +2133,12 @@ function handleRelayMessage(data) {
   } catch(e) {
     console.error('[WebBridge] relay message error:', e);
   }
+}
+
+// Handle a message from the WebRTC data channel.
+// The data channel uses DTLS encryption (built into WebRTC), so we skip secretbox decryption.
+function handleDataChannelMessage(data) {
+  handleRelayMessage(data, true);
 }
 
 // Parse TerminalResponse proto and fire session event for Flutter
@@ -1718,9 +2219,12 @@ async function sendUploadBlocks(id, fileNum, file, idAsSint) {
   let offset = 0;
   const startTime = Date.now();
   while (offset < file.size) {
+    const dc = sessionState.dataChannel;
+    const dcOpen = sessionState.dcTransport && dc && dc.readyState === 'open';
     const ws = sessionState.relayWs;
-    if (sessionState.closed || !ws || ws.readyState !== WebSocket.OPEN) {
-      console.warn('[WebBridge] upload aborted, relay not open at', offset, 'of', file.size);
+    const wsOpen = ws && ws.readyState === WebSocket.OPEN;
+    if (sessionState.closed || (!dcOpen && !wsOpen)) {
+      console.warn('[WebBridge] upload aborted, transport not open at', offset, 'of', file.size);
       return false;
     }
     if (window._cancelledJobs && window._cancelledJobs.has(id)) {
@@ -1746,9 +2250,24 @@ async function sendUploadBlocks(id, fileNum, file, idAsSint) {
       return false;
     }
     offset = end;
+    // The native client relies on TCP kernel flow control — stream.send() naturally
+    // blocks when the kernel buffer is full. Both WebRTC data channels and relay
+    // WebSocket sends are synchronous and copy into internal buffers. Without
+    // backpressure the loop can outpace the network: dc.send() throws
+    // OperationError (Chrome's DC buffer is ~16 MB), and ws.send() queues the
+    // "done" message behind unsent data that is lost if the connection closes
+    // before the buffer drains. So we check bufferedAmount after each send and
+    // wait until the buffer drops to a low water mark before sending more.
+    const transportBuffered = () => dcOpen ? (dc.bufferedAmount || 0) : (ws.bufferedAmount || 0);
+    if (transportBuffered() > 15 * 1024 * 1024) {
+      while (transportBuffered() > 1 * 1024 * 1024 && !sessionState.closed
+             && (dcOpen ? dc.readyState === 'open' : ws.readyState === WebSocket.OPEN)) {
+        await new Promise(r => setTimeout(r, 20));
+      }
+    }
     // Report upload progress to Flutter so the status panel can update.
-    // Use estimated transmitted bytes (offset - ws.bufferedAmount) for smoother progress.
-    const bufferedAmt = ws.bufferedAmount || 0;
+    // Subtract bytes still buffered by the transport that carried this block.
+    const bufferedAmt = transportBuffered();
     const estimatedTx = Math.max(0, offset - bufferedAmt);
     const elapsed = (Date.now() - startTime) / 1000 || 1;
     const speed = estimatedTx / elapsed;
@@ -2253,6 +2772,9 @@ function handleSignedId(signedIdBytes) {
   sessionState.encSeqRecv = 0n;
   sessionState.secured = true;
   console.log('[WebBridge] Encryption enabled');
+  if (!sessionState.dcTransport) {
+    fireSessionEvent('connection_type', JSON.stringify({ type: 'WebSocket' }));
+  }
 }
 
 // src/client.rs keeps the accepted password in PeerConfig and derives `remember` from that entry
@@ -2455,8 +2977,8 @@ function handlePeerInfo(piBytes) {
   fireSessionEvent('connection_ready', JSON.stringify({
     name: 'connection_ready',
     secure: sessionState.secured ? 'true' : 'false',
-    direct: 'false',
-    stream_type: '',
+    direct: sessionState.webrtcConnected ? 'true' : 'false',
+    stream_type: sessionState.webrtcConnected ? 'WebRTC' : 'WebSocket',
   }));
   // Save peer info to recent peers for every connection type (desktop, camera, file transfer,
   // terminal): any peer you authenticate to shows up in history, matching native where the recent
