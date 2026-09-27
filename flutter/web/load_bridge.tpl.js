@@ -5,6 +5,19 @@ const VERSION = '__VERSION__';
 const BUILD_DATE = '__BUILD_DATE__';
 const APP_NAME = 'RustDesk';
 
+// Saved so closeSession can restore the title the page had before the connection.
+let _originalTitle = '';
+// Saved so closeSession can restore the favicon the page had before the connection.
+let _originalIcon = '';
+
+// Connection-type favicon URLs, pre-rendered from native SVG assets as 16x16 PNGs.
+const _CONN_ICONS = {
+  secure: 'icons/favicon_secure.png',
+  secure_relay: 'icons/favicon_secure_relay.png',
+  insecure: 'icons/favicon_insecure.png',
+  insecure_relay: 'icons/favicon_insecure_relay.png',
+};
+
 // Per-message tracing used to be unconditional, which logged every video frame. Load the
 // page with ?debug=1 to get it back.
 const DEBUG = (() => {
@@ -848,6 +861,11 @@ let sessionState = {
   _iceResendTimers: [],
   // Remote trickle ICE candidates received before the SDP answer.
   _pendingRemoteIceCandidates: [],
+  // IP version of the active WebRTC connection ('IPv4', 'IPv6', or '' if unknown).
+  webrtcIpVersion: '',
+  // ICE candidates gathered during negotiation, keyed by RTCIceCandidate.id,
+  // for IP version detection (getStats may redact IPs).
+  _gatheredCandidates: {},
 };
 
 function getRelayWsUrl(relayServer) {
@@ -979,17 +997,30 @@ async function createWebRtcOffer() {
     sessionState.pc = pc;
 
     // Trickle ICE: send each local candidate to the peer via the rendezvous WS as it arrives.
+    // Also track gathered candidates for later IP version detection (getStats may redact IPs).
     pc.onicecandidate = (e) => {
       if (e.candidate && e.candidate.candidate) {
         const json = JSON.stringify(e.candidate.toJSON());
         dbg('[WebRTC] local ICE candidate:', json.substring(0, 60) + '...');
         sendWebRtcIceCandidate(json);
+        // Parse IP from the candidate SDP string: "candidate:<found> <comp> <proto> <prio> <ip> <port> ..."
+        const parts = e.candidate.candidate.split(' ');
+        if (parts.length >= 5 && e.candidate.id) {
+          // Key by candidate ID (matches getStats localCandidateId), not foundation,
+          // because IPv4 and IPv6 host candidates can share the same foundation.
+          sessionState._gatheredCandidates[e.candidate.id] = parts[4];
+          dbg('[WebRTC] gathered candidate id:', e.candidate.id, 'ip:', parts[4]);
+        }
       }
     };
     pc.onconnectionstatechange = () => {
       console.log('[WebRTC] connection state:', pc.connectionState);
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         sessionState.webrtcConnected = false;
+      }
+      // When connected, determine the IP version of the active candidate pair.
+      if (pc.connectionState === 'connected') {
+        detectWebrtcIpVersion();
       }
     };
 
@@ -1124,6 +1155,7 @@ function setupDataChannel(dc) {
         console.log('[WebRTC] data channel using DTLS encryption (no secretbox)');
       }
     }
+    updateConnectionTitle(true, true, 'WebRTC');
     fireSessionEvent('connection_type', JSON.stringify({ type: 'WebRTC' }));
   };
 
@@ -1235,6 +1267,8 @@ function cleanupWebRtc() {
   sessionState.dcTransport = false;
   sessionState._offerPromise = null;
   sessionState._pendingRemoteIceCandidates = [];
+  sessionState.webrtcIpVersion = '';
+  sessionState._gatheredCandidates = {};
   if (sessionState._preferenceTimer) {
     clearTimeout(sessionState._preferenceTimer);
     sessionState._preferenceTimer = null;
@@ -1243,6 +1277,122 @@ function cleanupWebRtc() {
     clearTimeout(t);
   }
   sessionState._iceResendTimers = [];
+}
+
+// Determine the IP version (IPv4/IPv6) of the active WebRTC candidate pair.
+// Mirrors the native client's is_remote_ipv6(): checks the REMOTE candidate's
+// address, because that is the address the peer is actually reached at.
+// Retries a few times because some browsers delay populating address fields.
+// Updates sessionState.webrtcIpVersion and refreshes the page title.
+function detectWebrtcIpVersion(retryCount) {
+  const pc = sessionState.pc;
+  if (!pc) return;
+  retryCount = retryCount || 0;
+  pc.getStats().then(stats => {
+    let ipVersion = '';
+    // Find the active candidate pair (nominated + succeeded)
+    stats.forEach(report => {
+      if (ipVersion) return; // already found
+      if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+        const remoteCandidate = stats.get(report.remoteCandidateId);
+        const localCandidate = stats.get(report.localCandidateId);
+        // Check REMOTE candidate first (matches native client's is_remote_ipv6).
+        if (remoteCandidate) {
+          let remoteAddr = remoteCandidate.address || remoteCandidate.ip || '';
+          if (!remoteAddr && remoteCandidate.candidate) {
+            const parts = remoteCandidate.candidate.split(' ');
+            if (parts.length >= 5) remoteAddr = parts[4];
+          }
+          if (remoteAddr) {
+            ipVersion = remoteAddr.includes(':') ? 'IPv6' : 'IPv4';
+            console.log('[WebRTC] active connection (remote):', ipVersion, 'address:', remoteAddr);
+          }
+        }
+        // Fall back to local candidate if remote is fully redacted.
+        if (!ipVersion && localCandidate) {
+          let localAddr = localCandidate.address || localCandidate.ip || '';
+          if (!localAddr && localCandidate.candidate) {
+            const parts = localCandidate.candidate.split(' ');
+            if (parts.length >= 5) localAddr = parts[4];
+          }
+          if (!localAddr && sessionState._gatheredCandidates[report.localCandidateId]) {
+            localAddr = sessionState._gatheredCandidates[report.localCandidateId];
+          }
+          if (localAddr) {
+            ipVersion = localAddr.includes(':') ? 'IPv6' : 'IPv4';
+            console.log('[WebRTC] active connection (local fallback):', ipVersion, 'address:', localAddr);
+          }
+        }
+      }
+    });
+    if (ipVersion) {
+      sessionState.webrtcIpVersion = ipVersion;
+      updateConnectionTitle(true, true, 'WebRTC');
+    } else if (retryCount < 3) {
+      // Browser may not have populated address fields yet; retry with delay.
+      setTimeout(() => detectWebrtcIpVersion(retryCount + 1), 500);
+    } else {
+      console.warn('[WebRTC] could not determine IP version after retries,',
+                   'gatheredCandidates:', JSON.stringify(sessionState._gatheredCandidates));
+    }
+  }).catch(e => {
+    console.warn('[WebRTC] getStats failed:', e);
+  });
+}
+
+// Update the browser tab title to reflect the current connection type, matching the
+// native client's getConnectionText() in flutter/lib/common.dart.
+// Uses translateText() for i18n with the same keys as the native client.
+// The original title is saved on first call and restored by closeSession().
+function updateConnectionTitle(secure, direct, streamType) {
+  if (!_originalTitle) {
+    _originalTitle = document.title;
+  }
+  // Mirror native getConnectionText(): four combinations of secure × direct.
+  let text;
+  if (secure && direct) {
+    text = translateText('en', 'Direct and encrypted connection');
+  } else if (secure && !direct) {
+    text = translateText('en', 'Relayed and encrypted connection');
+  } else if (!secure && direct) {
+    text = translateText('en', 'Direct and unencrypted connection');
+  } else {
+    text = translateText('en', 'Relayed and unencrypted connection');
+  }
+  // Append stream type (same mapping as native: 'Relay' → 'TCP').
+  let stream = streamType || '';
+  if (stream === 'Relay') stream = 'TCP';
+  if (stream) {
+    // Append IP version for WebRTC connections when known.
+    const ipSuffix = (streamType === 'WebRTC' && sessionState.webrtcIpVersion)
+      ? `/${sessionState.webrtcIpVersion}`
+      : '';
+    text += ` (${stream}${ipSuffix})`;
+  }
+  document.title = text;
+  // Also update the browser tab favicon to match the connection type.
+  updateConnectionIcon(secure, direct);
+}
+
+// Swap the browser tab favicon to a connection-type icon drawn on canvas.
+// Browsers ignore in-place href changes on <link rel="icon">, so we remove the old
+// element and insert a fresh one each time.
+function updateConnectionIcon(secure, direct) {
+  // Save the original favicon on first swap so closeSession can restore it.
+  if (!_originalIcon) {
+    const old = document.querySelector('link[rel="icon"]');
+    _originalIcon = old ? (old.getAttribute('href') || '') : '';
+  }
+  const key = (secure ? 'secure' : 'insecure') + (direct ? '' : '_relay');
+  const href = _CONN_ICONS[key];
+  if (!href) return;
+  // Remove every existing icon link so the browser picks up the new one.
+  document.querySelectorAll('link[rel="icon"]').forEach(el => el.remove());
+  const link = document.createElement('link');
+  link.rel = 'icon';
+  link.type = 'image/png';
+  link.href = href;
+  document.head.appendChild(link);
 }
 
 function fireSessionEvent(name, data) {
@@ -1493,6 +1643,21 @@ function closeSessionSocket(key) {
 
 function closeSession() {
   sessionState.closed = true;
+  // Restore the page title the session started with.
+  if (_originalTitle) {
+    document.title = _originalTitle;
+    _originalTitle = '';
+  }
+  // Restore the original favicon.
+  if (_originalIcon) {
+    document.querySelectorAll('link[rel="icon"]').forEach(el => el.remove());
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    link.type = 'image/png';
+    link.href = _originalIcon;
+    document.head.appendChild(link);
+    _originalIcon = '';
+  }
   clearSessionTimeout('rzTimeout');
   clearSessionTimeout('relayTimeout');
   clearSessionTimeout('rzRegTimeout');
@@ -2772,7 +2937,11 @@ function handleSignedId(signedIdBytes) {
   sessionState.encSeqRecv = 0n;
   sessionState.secured = true;
   console.log('[WebBridge] Encryption enabled');
+  // Only update the title if the data channel is NOT the transport.
+  // If dcTransport is true, the title was already set to "Direct & Secure (WebRTC)"
+  // when the data channel opened.
   if (!sessionState.dcTransport) {
+    updateConnectionTitle(true, false, 'WebSocket');
     fireSessionEvent('connection_type', JSON.stringify({ type: 'WebSocket' }));
   }
 }
@@ -2960,6 +3129,11 @@ function handlePeerInfo(piBytes) {
   }
   if (platformAdditions) evt.platform_additions = platformAdditions;
   fireSessionEvent('peer_info', JSON.stringify(evt));
+  // If the relay connection is not encrypted, update the title now (the encrypted case
+  // already set the title when encryption was enabled). Skip if data channel is the transport.
+  if (!sessionState.secured && !sessionState.dcTransport) {
+    updateConnectionTitle(false, false, 'WebSocket');
+  }
   // Check for no camera in camera view mode
   if (sessionState.isViewCamera && displays.length === 0) {
     const userLocale = (navigator.language || navigator.userLanguage || 'en');
