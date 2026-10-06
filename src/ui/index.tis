@@ -1758,7 +1758,7 @@ function refreshCurrentUser() {
             handleAbError(data.error);
             return;
         }
-	if (!handler.verify_login(data.verifier, token)) {
+        if (!handler.verify_login(data.verifier || "", token)) {
           handleAbError("Please update your self-hosting server Pro to latest version");
           return;
         }

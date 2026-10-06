@@ -1,5 +1,7 @@
 var selectTags = [];
 var ab = { tags: [], peers: [] };
+var abList = []; // [{name: "Personal", guid: "...", peers: [], tags: []}, ...]
+var currentAbIdx = 0;
 var abLoading;
 var abError;
 var current_menu_peer_id = '';
@@ -39,9 +41,16 @@ class AddressBook: Reactor.Component
                 </menu>
             </popup>
             <div .left-pane>
+                {abList.length > 1 ?
+                    <select #ab-selector style="width:*; margin-bottom: 0.5em;">
+                        {abList.map(function(abItem, idx) {
+                            return <option value={idx} selected={idx == currentAbIdx}>{abItem.name}</option>;
+                        })}
+                    </select>
+                : null}
                 <div style="padding: 0; padding-bottom: 1em" #tags-label>{translate('Tags')}{svg_menu}</div>
                 <div #tags>
-                    {ab.tags.map(function(t) {
+                    {(ab.tags || []).map(function(t) {
                         return <span class={me.selectedTags.indexOf(t) >= 0 ? "active" : "inactive"}>{t}</span>;
                     })}
                 </div>
@@ -59,6 +68,21 @@ class AddressBook: Reactor.Component
             current_menu_tag = me.text;
             me.popup($(#tag-context));
             return true;
+        }
+    }
+
+    event change $(#ab-selector) (_, me) {
+        var idx = me.value + 0;
+        if (idx >= 0 && idx < abList.length) {
+            currentAbIdx = idx;
+            ab = abList[currentAbIdx];
+            this.selectedTags = [];
+            handler.set_local_option("current-ab-idx", "" + currentAbIdx);
+            this.update();
+            app.post(function() {
+                var sel = app.$(select#ab-selector);
+                if (sel) sel.value = currentAbIdx;
+            });
         }
     }
     
@@ -166,6 +190,34 @@ class AddressBook: Reactor.Component
             this.selectedTags = tags;
             handler.set_local_option("selected-tags", tags.join(","));
             stdout.println("updated selected tags");
+        }
+        // When searching, search across all address books (like Flutter)
+        var pattern = searchPatterns["ab"];
+        if (pattern) {
+            var allPeers = [];
+            var seenIds = {};
+            for (var i = 0; i < abList.length; i++) {
+                var abItem = abList[i];
+                var itemPeers = abItem.peers || [];
+                // Apply tag filter if any
+                if (tags.length > 0) {
+                    for (var j = 0; j < itemPeers.length; j++) {
+                        var p = itemPeers[j];
+                        var match = false;
+                        for (var k = 0; k < (p.tags || []).length; k++) {
+                            if (tags.indexOf(p.tags[k]) >= 0) { match = true; break; }
+                        }
+                        if (!match) continue;
+                        if (!seenIds[p.id]) { seenIds[p.id] = true; allPeers.push(p); }
+                    }
+                } else {
+                    for (var j = 0; j < itemPeers.length; j++) {
+                        var p = itemPeers[j];
+                        if (!seenIds[p.id]) { seenIds[p.id] = true; allPeers.push(p); }
+                    }
+                }
+            }
+            return allPeers;
         }
         if (tags.length == 0) return ab.peers;
         var peers = [];
@@ -643,26 +695,215 @@ function handleAbError(err) {
     app.update();
 }
 
+// --- New mode (personal/shared AB) state machine ---
+// All at file level to avoid TIS closure/hoisting issues
+var _nmApiServer = "";
+var _nmGuids = [];     // [{guid: "...", name: "..."}]
+var _nmPeersMap = {};  // guid -> [peers]
+var _nmTagsMap = {};   // guid -> [tags]
+var _nmIdx = 0;
+var _nmPage = 1;
+
+function _nmMakePeer(p) {
+    return { id: p.id || "", username: p.username || "", hostname: p.hostname || "", platform: p.platform || "", alias: p.alias || "", tags: p.tags || [] };
+}
+
+function _nmStep(step) {
+    if (!abLoading) return; // aborted
+    if (step == 0) {
+        // Fetch shared profiles
+        httpRequest(_nmApiServer + "/api/ab/shared/profiles?current=1&pageSize=100", #post, {}, function(data) {
+            var resp = (typeof data == "string") ? null : data;
+            if (!resp) { try { resp = JSON.parse(data); } catch (e) { _nmStep(1); return; } }
+            if (resp && resp.data && resp.data instanceof Array) {
+                for (var i = 0; i < resp.data.length; i++) {
+                    var profile = resp.data[i];
+                    if (profile && profile.guid) {
+                        var exists = false;
+                        for (var j = 0; j < _nmGuids.length; j++) {
+                            if (_nmGuids[j].guid == profile.guid) { exists = true; break; }
+                        }
+                        if (!exists) _nmGuids.push({ guid: profile.guid, name: profile.name || profile.guid });
+                    }
+                }
+            }
+            _nmStep(1);
+        }, function(err, status) {
+            _nmStep(1); // continue with personal only
+        }, getHttpHeaders());
+    } else if (step == 1) {
+        // Start fetching peers for first guid
+        _nmIdx = 0;
+        _nmPage = 1;
+        _nmStep(2);
+    } else if (step == 2) {
+        // Fetch peers for current guid, current page
+        if (_nmIdx >= _nmGuids.length) { _nmStep(4); return; }
+        var curGuid = _nmGuids[_nmIdx].guid;
+        if (!_nmPeersMap[curGuid]) _nmPeersMap[curGuid] = [];
+        var peerList = _nmPeersMap[curGuid];
+        httpRequest(_nmApiServer + "/api/ab/peers?current=" + _nmPage + "&pageSize=100&ab=" + curGuid, #post, {}, function(data) {
+            var resp = (typeof data == "string") ? null : data;
+            if (!resp) { try { resp = JSON.parse(data); } catch (e) { _nmStep(3); return; } }
+            if (resp && resp.data && resp.data instanceof Array) {
+                for (var i = 0; i < resp.data.length; i++) {
+                    var p = resp.data[i];
+                    var found = false;
+                    for (var j = 0; j < peerList.length; j++) {
+                        if (peerList[j].id == p.id) { found = true; peerList[j] = _nmMakePeer(p); break; }
+                    }
+                    if (!found) peerList.push(_nmMakePeer(p));
+                }
+                var total = resp.total || 0;
+                if (_nmPage * 100 < total) {
+                    _nmPage++;
+                    _nmStep(2); // next page
+                    return;
+                }
+            }
+            _nmStep(3);
+        }, function(err, status) {
+            _nmStep(3); // skip to next guid
+        }, getHttpHeaders());
+    } else if (step == 3) {
+        // Move to next guid for peers
+        _nmIdx++;
+        _nmPage = 1;
+        if (_nmIdx >= _nmGuids.length) { _nmStep(4); return; }
+        _nmStep(2); // fetch peers for next guid
+    } else if (step == 4) {
+        // Start fetching tags
+        _nmIdx = 0;
+        _nmStep(5);
+    } else if (step == 5) {
+        // Fetch tags for current guid
+        if (_nmIdx >= _nmGuids.length) { _nmStep(6); return; }
+        var curGuid = _nmGuids[_nmIdx].guid;
+        httpRequest(_nmApiServer + "/api/ab/tags/" + curGuid, #post, {}, function(data) {
+            var tagList = (typeof data == "string") ? null : data;
+            if (!tagList) { try { tagList = JSON.parse(data); } catch (e) { tagList = []; } }
+            var tags = [];
+            if (tagList instanceof Array) {
+                for (var i = 0; i < tagList.length; i++) {
+                    var t = tagList[i];
+                    var name = typeof t == "string" ? t : (t.name || "");
+                    if (name && tags.indexOf(name) < 0) tags.push(name);
+                }
+            }
+            _nmTagsMap[curGuid] = tags;
+            _nmStep(5.1);
+        }, function(err, status) {
+            _nmStep(5.1);
+        }, getHttpHeaders());
+    } else if (step == 5.1) {
+        // Move to next guid for tags
+        _nmIdx++;
+        if (_nmIdx >= _nmGuids.length) { _nmStep(6); return; }
+        _nmStep(5);
+    } else if (step == 6) {
+        // Done - build abList
+        abList = [];
+        for (var i = 0; i < _nmGuids.length; i++) {
+            var g = _nmGuids[i];
+            var abName = g.name;
+            if (abName == g.guid) abName = (i == 0) ? "Personal" : g.guid;
+            abList.push({
+                name: abName,
+                guid: g.guid,
+                peers: _nmPeersMap[g.guid] || [],
+                tags: _nmTagsMap[g.guid] || []
+            });
+        }
+        currentAbIdx = 0;
+        var savedIdx = handler.get_local_option("current-ab-idx");
+        if (savedIdx) {
+            var idx = savedIdx.toNumber();
+            if (idx >= 0 && idx < abList.length) currentAbIdx = idx;
+        }
+        ab = abList.length > 0 ? abList[currentAbIdx] : { tags: [], peers: [] };
+        abLoading = false;
+        app.update();
+        app.post(function() {
+            var sel = app.$(select#ab-selector);
+            if (sel) sel.value = currentAbIdx;
+        });
+    }
+}
+
+function getAbNewMode(apiServer, personalGuid) {
+    _nmApiServer = apiServer;
+    _nmGuids = [{ guid: personalGuid, name: "Personal" }];
+    _nmPeersMap = {};
+    _nmTagsMap = {};
+    _nmIdx = 0;
+    _nmPage = 1;
+    _nmStep(0);
+}
+
 function getAb() {
     abLoading = true;
     abError = "";
     app.update();
-    httpRequest(handler.get_api_server() + "/api/ab/get", #post, {}, function(data) {
-        if (data) {
-            if (data.error) {
-                handleAbError(data.error);
-                return;
-            }
-            var tm = data.updated_at;
-            ab = JSON.parse(data.data);
-            if (!ab.tags) ab.tags = [];
-            if (!ab.peers) ab.peers = [];
+    var apiServer = handler.get_api_server();
+    if (!apiServer) {
+        handleAbError("API server is empty");
+        return;
+    }
+    // Step 1: Check if server supports personal address book (same as Flutter _getPersonalAbGuid)
+    httpRequest(apiServer + "/api/ab/personal", #post, {}, function(data) {
+        var resp = (typeof data == "string") ? null : data;
+        if (!resp) {
+            try { resp = JSON.parse(data); } catch (e) { getAbLegacy(apiServer); return; }
         }
+        if (resp && resp.guid) {
+            getAbNewMode(apiServer, resp.guid);
+        } else {
+            getAbLegacy(apiServer);
+        }
+    }, function(err, status) {
+        if (status == 404) {
+            getAbLegacy(apiServer);
+        } else {
+            handleAbError(err);
+        }
+    }, getHttpHeaders());
+}
+
+// Legacy address book (GET /api/ab) - same as Flutter LegacyAb.pullAbImpl
+function getAbLegacy(apiServer) {
+    var headers = "{\"Authorization\": \"Bearer " + handler.get_local_option("access_token") + "\"}";
+    httpRequest(apiServer + "/api/ab", #get, {}, function(data) {
+        var body = data.body;
+        if (body == undefined || body == null) {
+            if (data.data != undefined) {
+                if (typeof data.data == "string" && data.data != "null") {
+                    ab = JSON.parse(data.data);
+                } else if (typeof data.data == "object") {
+                    ab = data.data;
+                } else {
+                    ab = { tags: [], peers: [] };
+                }
+            } else {
+                ab = { tags: [], peers: [] };
+            }
+        } else {
+            var resp;
+            try { resp = JSON.parse(body); } catch (e) { resp = {}; }
+            if (resp && resp.error) { handleAbError(resp.error); return; }
+            if (resp && resp.data && resp.data != "null") {
+                ab = (typeof resp.data == "string") ? JSON.parse(resp.data) : resp.data;
+            } else {
+                ab = { tags: [], peers: [] };
+            }
+        }
+        if (!ab) ab = { tags: [], peers: [] };
+        if (!ab.tags) ab.tags = [];
+        if (!ab.peers) ab.peers = [];
         abLoading = false;
         app.update();
     }, function(err, status) {
-        handleAbError(err);
-    }, getHttpHeaders());
+        if (abLoading) handleAbError(err);
+    }, headers);
 }
 
 function updateAb() {
