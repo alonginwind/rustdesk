@@ -3760,8 +3760,8 @@ window.setByName = function(name, value) {
           const modifiers = [];
           if (obj.lock_modes) {
             const lm = parseInt(obj.lock_modes) || 0;
-            if (lm & 1) modifiers.push(3);   // CapsLock
-            if (lm & 2) modifiers.push(63);  // NumLock
+            if (lm & 2) modifiers.push(3);   // CapsLock
+            if (lm & 4) modifiers.push(63);  // NumLock
           }
           // Use Legacy mode (mode=0) with ASCII character code for cross-platform compatibility.
           // Map mode requires platform-specific keycodes which we don't have on web.
