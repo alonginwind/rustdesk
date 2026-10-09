@@ -3537,7 +3537,18 @@ let _rgbaCtx = null;
 const MAX_VIDEO_DECODE_ERRORS = 10;
 
 function webVideoDecoderConfig(codec) {
-  return {codec, optimizeForLatency:true};
+  const config = {codec, optimizeForLatency:true};
+  const nav = typeof navigator === 'undefined' ? {} : navigator;
+  const ua = nav.userAgent || '';
+  const platform = nav.userAgentData?.platform || '';
+  const linux = platform === 'Linux' || /Linux/i.test(ua);
+  const chromium = /(?:Chrome|Chromium|Edg|OPR)\//.test(ua) ||
+    (nav.userAgentData?.brands || []).some(b => /Chromium|Google Chrome|Microsoft Edge/.test(b.brand));
+  // This is the browser's OS, independent of the remote peer's platform.
+  if (linux && chromium && !/Android|Firefox/i.test(ua)) {
+    config.hardwareAcceleration = 'prefer-software';
+  }
+  return config;
 }
 
 function resetWebVideoDecoders(display) {
