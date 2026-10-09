@@ -692,6 +692,8 @@ const MSG_MSG = {
   CURSOR_POS: 13,
   CURSOR_ID: 14,
   KEY_EVENT: 15,
+  CLIPBOARD: 16,
+  MULTI_CLIPBOARDS: 28,
   MISC: 19,
   PEER_INFO: 25,
   TERMINAL_ACTION: 31,
@@ -1839,6 +1841,7 @@ function closeSessionSocket(key) {
 }
 
 function closeSession() {
+  resetWebClipboard();
   releaseWebModifiers();
   sessionState.closed = true;
   // Restore the page title the session started with.
@@ -2469,6 +2472,10 @@ function handleRelayMessage(data, alreadyDecrypted) {
       handleVideoFrame(msg[MSG_MSG.VIDEO_FRAME]);
     } else if (msg[MSG_MSG.AUDIO_FRAME]) {
       // audio frame - not handled yet
+    } else if (msg[MSG_MSG.CLIPBOARD]) {
+      handleWebClipboard(msg[MSG_MSG.CLIPBOARD]);
+    } else if (msg[MSG_MSG.MULTI_CLIPBOARDS]) {
+      handleWebClipboard(msg[MSG_MSG.MULTI_CLIPBOARDS], true);
     } else if (msg[MSG_MSG.MISC]) {
       handleMiscMessage(msg[MSG_MSG.MISC]);
     } else if (msg[MSG_MSG.TEST_DELAY]) {
@@ -2497,6 +2504,185 @@ function handleRelayMessage(data, alreadyDecrypted) {
     console.error('[WebBridge] relay message error:', e);
   }
 }
+
+// Text and image clipboard; file transfer stays separate. No background reads of the local system clipboard.
+const WEB_CLIPBOARD_LIMIT = 1024 * 1024;
+const WEB_CLIPBOARD_IMAGE_LIMIT = 16 * 1024 * 1024;
+const WEB_CLIPBOARD_PIXELS = 16 * 1024 * 1024;
+let webClipboardRevision = 0;
+let webClipboardEpoch = 0;
+let webClipboardRemote = null;
+let webClipboardStarted = false;
+let webClipboardPasteKey = false;
+let webClipboardBusy = false;
+
+function webClipboardAvailable() {
+  return !sessionState.closed && sessionState.loggedIn && !sessionState.isFileTransfer &&
+    !sessionState.isViewCamera && !sessionState.isTerminal && localStorage.getItem('option:toggle:disable-clipboard') !== 'true' &&
+    sessionState.webClipboardAllowed !== false;
+}
+function webClipboardNotice(text) {
+  console.warn('[WebBridge] Clipboard:', text);
+}
+function resetWebClipboard() {
+  webClipboardEpoch++;
+  webClipboardRevision++;
+  webClipboardRemote = null;
+  webClipboardBusy = false;
+  delete sessionState.webClipboardAllowed;
+  webClipboardStarted = false;
+  webClipboardPasteKey = false;
+}
+function setWebClipboardPermission(allowed) {
+  sessionState.webClipboardAllowed = allowed;
+  if (!allowed) { webClipboardRevision++; webClipboardEpoch++; webClipboardBusy = false; webClipboardRemote = null; }
+  if (!allowed) webClipboardNotice('Clipboard disabled by remote PC');
+}
+function validWebClipboardDimensions(width, height) {
+  return Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0 &&
+    width <= WEB_CLIPBOARD_PIXELS && height <= WEB_CLIPBOARD_PIXELS && width * height <= WEB_CLIPBOARD_PIXELS;
+}
+function validateWebClipboardPng(bytes) {
+  const signature = [137,80,78,71,13,10,26,10];
+  if (bytes.length < 33 || bytes.length > WEB_CLIPBOARD_IMAGE_LIMIT ||
+      !signature.every((v,i) => bytes[i] === v) ||
+      bytes[12] !== 73 || bytes[13] !== 72 || bytes[14] !== 68 || bytes[15] !== 82) throw Error('Invalid PNG');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(8) !== 13 || !validWebClipboardDimensions(view.getUint32(16), view.getUint32(20))) throw Error('PNG dimensions exceed limit');
+}
+function handleWebClipboard(bytes, multiple = false) {
+  if (!webClipboardAvailable()) return;
+  webClipboardRevision++;
+  webClipboardRemote = null;
+  const entries = (multiple ? parseRepeatedField(bytes, 1) : [bytes]).map(parseRendezvousFields);
+  const imagesSupported = typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function';
+  // Preserve image semantics when an application also offers a text representation.
+  for (const format of imagesSupported ? [22,21,0] : [0]) {
+    const cb = entries.find(c => (c[5] || 0) === format);
+    if (!cb) continue;
+    try {
+      let content = cb[2] instanceof Uint8Array ? cb[2] : new Uint8Array(0);
+      const limit = format === 0 ? WEB_CLIPBOARD_LIMIT : format === 21 ? WEB_CLIPBOARD_PIXELS * 4 : WEB_CLIPBOARD_IMAGE_LIMIT;
+      if (content.length > limit) throw Error('Clipboard exceeds limit');
+      if (cb[1]) content = zstdDecompress(content);
+      if (!content || content.length > limit) throw Error('Cannot decode clipboard');
+      if (format === 0) {
+        webClipboardRemote = {format, text:new TextDecoder('utf-8', {fatal:true}).decode(content)};
+      } else {
+        if (format === 22) validateWebClipboardPng(content);
+        const width = cb[3] || 0, height = cb[4] || 0;
+        if (format === 21 && (!validWebClipboardDimensions(width,height) || content.length !== width * height * 4)) throw Error('Invalid RGBA dimensions');
+        webClipboardRemote = {format, content, width, height};
+      }
+      void copyWebClipboard();
+      return;
+    } catch (e) { webClipboardNotice(e.message); return; }
+  }
+  webClipboardNotice('Remote clipboard has no supported text/image');
+}
+async function sendWebClipboard() {
+  if (!webClipboardAvailable() || webClipboardBusy) return false;
+  const epoch = webClipboardEpoch;
+  webClipboardBusy = true;
+  try {
+    let content, format = 0;
+    if (typeof navigator.clipboard.read === 'function') {
+      const items = await navigator.clipboard.read();
+      if (epoch !== webClipboardEpoch || !webClipboardAvailable()) return false;
+      const image = items.find(item => item.types.includes('image/png'));
+      const item = image || items.find(item => item.types.includes('text/plain'));
+      if (!item) throw Error('Clipboard has no text or image');
+      const blob = await item.getType(image ? 'image/png' : 'text/plain');
+      format = image ? 22 : 0;
+      if (blob.size > (image ? WEB_CLIPBOARD_IMAGE_LIMIT : WEB_CLIPBOARD_LIMIT)) throw Error('Clipboard exceeds limit');
+      content = new Uint8Array(await blob.arrayBuffer());
+    } else {
+      content = new TextEncoder().encode(await navigator.clipboard.readText());
+    }
+    if (epoch !== webClipboardEpoch || !webClipboardAvailable()) return false;
+    if (format === 22) validateWebClipboardPng(content);
+    else if (content.length > WEB_CLIPBOARD_LIMIT) throw Error('Text exceeds limit');
+    relaySend(wrapMsg(MSG_MSG.CLIPBOARD, pbConcat(pbBytes(2, content), pbUint32(5, format))));
+    return true;
+  } catch (e) {
+    if (epoch === webClipboardEpoch) webClipboardNotice('Could not paste: ' + e.message + '; check browser clipboard permission');
+    return false;
+  } finally { if (epoch === webClipboardEpoch) webClipboardBusy = false; }
+}
+async function copyWebClipboard() {
+  if (!webClipboardAvailable() || webClipboardRemote === null) return;
+  const epoch = webClipboardEpoch, revision = webClipboardRevision, clip = webClipboardRemote;
+  try {
+    if (clip.format === 0) {
+      await navigator.clipboard.writeText(clip.text);
+    } else {
+      let blob;
+      if (clip.format === 22) blob = new Blob([clip.content], {type:'image/png'});
+      else {
+        const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(clip.width,clip.height) : document.createElement('canvas');
+        canvas.width = clip.width; canvas.height = clip.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw Error('Image conversion unavailable');
+        context.putImageData(new ImageData(new Uint8ClampedArray(clip.content),clip.width,clip.height),0,0);
+        blob = canvas.convertToBlob ? await canvas.convertToBlob({type:'image/png'}) :
+          await new Promise((resolve,reject) => canvas.toBlob(b => b ? resolve(b) : reject(Error('PNG conversion failed')), 'image/png'));
+      }
+      if (epoch !== webClipboardEpoch || revision !== webClipboardRevision || !webClipboardAvailable()) return;
+      if (blob.size > WEB_CLIPBOARD_IMAGE_LIMIT) throw Error('PNG exceeds limit');
+      await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+    }
+  } catch (e) {
+    if (epoch === webClipboardEpoch && revision === webClipboardRevision) webClipboardNotice('Remote copy blocked: ' + e.message + '; check browser clipboard permission');
+  }
+}
+function updateWebClipboardOption() {
+  const disabled = localStorage.getItem('option:toggle:disable-clipboard') === 'true';
+  if (disabled) {
+    webClipboardEpoch++;
+    webClipboardRevision++;
+    webClipboardRemote = null;
+    webClipboardBusy = false;
+  }
+  if (!webClipboardStarted || sessionState.closed || !sessionState.loggedIn) return;
+  relaySend(wrapMsg(MSG_MSG.MISC, pbBytes(7, pbUint32(8, disabled ? 2 : 1))));
+}
+function startWebClipboard() {
+  if (sessionState.closed || !sessionState.loggedIn || sessionState.isFileTransfer ||
+      sessionState.isViewCamera || sessionState.isTerminal || webClipboardStarted) return;
+  webClipboardStarted = true;
+  updateWebClipboardOption();
+}
+function pasteWebClipboardShortcut() {
+  if (hasPhysicalWebPeer()) {
+    const ctrlHeld = webPhysicalKeys.has(224) || webPhysicalKeys.has(228);
+    if (!ctrlHeld) sendPhysicalWebKey(224, true);
+    sendPhysicalWebKey(25, true);
+    sendPhysicalWebKey(25, false);
+    if (!ctrlHeld) sendPhysicalWebKey(224, false);
+  } else {
+    sendWebKey(undefined, 'v', false, true, [4], false);
+  }
+}
+window.addEventListener('keydown', event => {
+  if (!webClipboardAvailable() || event.code !== 'KeyV' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+  if (event.target?.closest?.('input,textarea,[contenteditable="true"]')) return;
+  if (!navigator.clipboard?.readText && !navigator.clipboard?.read) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  webClipboardPasteKey = true;
+  if (event.repeat || webClipboardBusy) return;
+  const epoch = webClipboardEpoch;
+  // Start clipboard read during the trusted key gesture. Forward paste only after Clipboard.
+  void sendWebClipboard().then(sent => {
+    if (sent && epoch === webClipboardEpoch && webClipboardAvailable()) pasteWebClipboardShortcut();
+  });
+}, {capture:true});
+window.addEventListener('keyup', event => {
+  if (event.code !== 'KeyV' || !webClipboardPasteKey) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  webClipboardPasteKey = false;
+}, {capture:true});
 
 // Handle a message from the WebRTC data channel.
 // The data channel uses DTLS encryption (built into WebRTC), so we skip secretbox decryption.
@@ -3368,6 +3554,7 @@ function handlePeerInfo(piBytes) {
       upsertRecentPeerField(sessionState.peerId, 'password', pwd);
     }
   }
+  startWebClipboard();
   console.log('[WebBridge] PeerInfo fired: displays=', displays.length, 'version=', version, 'resolutions=', resolutions.length);
 }
 
@@ -3627,6 +3814,7 @@ function handleMiscMessage(miscBytes) {
     const permId = pi[1] || 0;
     const enabled = pi[2] ? true : false;
     const permName = PERM_NAMES[permId] || ('unknown_' + permId);
+    if (permId === PERM.CLIPBOARD) setWebClipboardPermission(enabled);
     console.log('[WebBridge] Permission:', permName, 'enabled:', enabled);
     fireSessionEvent('permission', JSON.stringify({ name: permName, value: enabled ? 'true' : 'false' }));
   }
@@ -4467,6 +4655,7 @@ window.setByName = function(name, value) {
         const key = `option:toggle:${value}`;
         const cur = localStorage.getItem(key);
         localStorage.setItem(key, cur === 'true' ? 'false' : 'true');
+        if (value === 'disable-clipboard') updateWebClipboardOption();
         return '';
       }
       case 'options': {
