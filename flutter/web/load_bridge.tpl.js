@@ -3720,6 +3720,8 @@ window.setByName = function(name, value) {
           if (btn === 'left') btnFlag = MOUSE_BTN_LEFT;
           else if (btn === 'right') btnFlag = MOUSE_BTN_RIGHT;
           else if (btn === 'wheel' || btn === 'middle') btnFlag = MOUSE_BTN_WHEEL;
+          else if (btn === 'back') btnFlag = 0x08;
+          else if (btn === 'forward') btnFlag = 0x10;
           else btnFlag = parseInt(btn) || 0;
           if (type === 'down' || type === 'mousedown') {
             mask = (btnFlag << 3) | MOUSE_TYPE_DOWN;
