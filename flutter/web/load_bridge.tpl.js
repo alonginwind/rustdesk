@@ -157,6 +157,9 @@ const USB_HID_TO_CONTROL_KEY = {
   67: 10,  // F10
   68: 11,  // F11
   69: 12,  // F12
+  70: 57,  // PrintScreen -> Snapshot
+  71: 62,  // ScrollLock -> Scroll
+  72: 46,  // Pause
   73: 58,  // Insert
   74: 21,  // Home
   75: 26,  // PageUp
@@ -168,7 +171,23 @@ const USB_HID_TO_CONTROL_KEY = {
   81: 6,   // DownArrow
   82: 32,  // UpArrow
   83: 63,  // NumLock
+  84: 70,  // NumpadDivide -> Divide
+  85: 66,  // NumpadMultiply -> Multiply
+  86: 68,  // NumpadSubtract -> Subtract
+  87: 67,  // NumpadAdd -> Add
   88: 72,  // NumpadEnter
+  89: 34,  // Numpad1
+  90: 35,  // Numpad2
+  91: 36,  // Numpad3
+  92: 37,  // Numpad4
+  93: 38,  // Numpad5
+  94: 39,  // Numpad6
+  95: 40,  // Numpad7
+  96: 41,  // Numpad8
+  97: 42,  // Numpad9
+  98: 33,  // Numpad0
+  99: 69,  // NumpadDecimal -> Decimal
+  101: 65, // ContextMenu -> Apps
   224: 4,  // LeftControl -> Control
   225: 29, // LeftShift -> Shift
   226: 1,  // LeftAlt -> Alt
