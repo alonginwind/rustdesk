@@ -200,8 +200,7 @@ const USB_HID_TO_CONTROL_KEY = {
 
 // The legacy keyboard path (case 'input_key' below). native resolves the key name through
 // KEY_MAP to a ControlKey instead of dropping it; numbers are ControlKey values from
-// message.proto. Only the modifier keys are listed: every other name is already turned into a
-// character code above, and changing those would be an unrelated rewrite.
+// message.proto. The web handlers add navigation and keypad labels below.
 const KEY_NAME_TO_CONTROL_KEY = {
   'VK_CONTROL': 4,  // left Control
   'RControl': 74,
@@ -222,13 +221,192 @@ const LEGACY_MODIFIER_KEYS = [
   ['command', 23, 64], // Meta, RWin
 ];
 
-// The map keyboard path (case 'flutter_key_event') fakes legacy mode and its Dart payload has no
-// modifier flags, so the held modifiers are tracked here from the modifier key events themselves:
+// Flutter key payloads have no modifier flags, so held modifiers are tracked here
+// from the modifier key events themselves for the translated/Legacy fallback:
 // input_service.rs::fix_modifiers lifts every held modifier a key event does not name, which would
 // otherwise release the injected Ctrl as soon as the next letter arrives and turn Ctrl+C into 'c'.
 const MAP_MODIFIER_CONTROL_KEYS = new Set(
   LEGACY_MODIFIER_KEYS.flatMap(([, left, right]) => [left, right]));
 let heldMapModifiers = new Set();
+
+Object.assign(KEY_NAME_TO_CONTROL_KEY, {
+  VK_LEFT: 22, VK_RIGHT: 28, VK_UP: 32, VK_DOWN: 6,
+  VK_HOME: 21, VK_END: 7, VK_PRIOR: 26, VK_NEXT: 25,
+  VK_INSERT: 58, VK_DELETE: 5, VK_ENTER: 27, VK_RETURN: 27,
+  VK_BACK: 2, VK_TAB: 31, VK_ESCAPE: 8, VK_SPACE: 30,
+  VK_MULTIPLY:66, VK_ADD:67, VK_SUBTRACT:68, VK_DECIMAL:69, VK_DIVIDE:70, VK_SEPARATOR:61,
+  VK_CAPITAL: 3, VK_NUMLOCK: 63, VK_SCROLL: 62, VK_PAUSE: 46,
+  VK_SNAPSHOT: 57, Apps: 65,
+  ArrowLeft: 22, ArrowRight: 28, ArrowUp: 32, ArrowDown: 6
+});
+for (let i = 1; i <= 12; i++) {
+  KEY_NAME_TO_CONTROL_KEY['VK_F' + i] = USB_HID_TO_CONTROL_KEY[57 + i];
+}
+for (let i = 0; i <= 9; i++) KEY_NAME_TO_CONTROL_KEY['VK_NUMPAD' + i] = 33 + i;
+
+// Windows scan codes from rustdesk-org/rdev's HID and Windows tables.
+const WEB_WINDOWS_SCAN = {"4": 30, "5": 48, "6": 46, "7": 32, "8": 18, "9": 33, "10": 34, "11": 35, "12": 23, "13": 36, "14": 37, "15": 38, "16": 50, "17": 49, "18": 24, "19": 25, "20": 16, "21": 19, "22": 31, "23": 20, "24": 22, "25": 47, "26": 17, "27": 45, "28": 21, "29": 44, "30": 2, "31": 3, "32": 4, "33": 5, "34": 6, "35": 7, "36": 8, "37": 9, "38": 10, "39": 11, "40": 28, "41": 1, "42": 14, "43": 15, "44": 57, "45": 12, "46": 13, "47": 26, "48": 27, "49": 43, "51": 39, "52": 40, "53": 41, "54": 51, "55": 52, "56": 53, "57": 58, "58": 59, "59": 60, "60": 61, "61": 62, "62": 63, "63": 64, "64": 65, "65": 66, "66": 67, "67": 68, "68": 87, "69": 88, "70": 57399, "71": 70, "73": 57426, "74": 57415, "75": 57417, "76": 57427, "77": 57423, "78": 57425, "79": 57421, "80": 57419, "81": 57424, "82": 57416, "83": 69, "84": 57397, "85": 55, "86": 74, "87": 78, "88": 57372, "89": 79, "90": 80, "91": 81, "92": 75, "93": 76, "94": 77, "95": 71, "96": 72, "97": 73, "98": 82, "99": 83, "100": 86, "101": 57437, "103": 89, "104": 100, "105": 101, "106": 102, "107": 103, "108": 104, "109": 105, "110": 106, "111": 107, "112": 108, "113": 109, "114": 110, "115": 118, "127": 57376, "128": 57392, "129": 57390, "133": 126, "135": 115, "136": 128, "137": 125, "138": 121, "139": 123, "144": 242, "145": 241, "146": 120, "147": 119, "148": 118, "224": 29, "225": 42, "226": 56, "227": 57435, "228": 57373, "229": 54, "230": 57400, "231": 57436};
+// Linux X11 keycodes from rustdesk-org/rdev. No runtime dependency on a download.
+const WEB_LINUX_SCAN = {"4": 38, "5": 56, "6": 54, "7": 40, "8": 26, "9": 41, "10": 42, "11": 43, "12": 31, "13": 44, "14": 45, "15": 46, "16": 58, "17": 57, "18": 32, "19": 33, "20": 24, "21": 27, "22": 39, "23": 28, "24": 30, "25": 55, "26": 25, "27": 53, "28": 29, "29": 52, "30": 10, "31": 11, "32": 12, "33": 13, "34": 14, "35": 15, "36": 16, "37": 17, "38": 18, "39": 19, "40": 36, "41": 9, "42": 22, "43": 23, "44": 65, "45": 20, "46": 21, "47": 34, "48": 35, "49": 51, "51": 47, "52": 48, "53": 49, "54": 59, "55": 60, "56": 61, "57": 66, "58": 67, "59": 68, "60": 69, "61": 70, "62": 71, "63": 72, "64": 73, "65": 74, "66": 75, "67": 76, "68": 95, "69": 96, "70": 107, "71": 78, "72": 127, "73": 118, "74": 110, "75": 112, "76": 119, "77": 115, "78": 117, "79": 114, "80": 113, "81": 116, "82": 111, "83": 77, "84": 106, "85": 63, "86": 82, "87": 86, "88": 104, "89": 87, "90": 88, "91": 89, "92": 83, "93": 84, "94": 85, "95": 79, "96": 80, "97": 81, "98": 90, "99": 91, "100": 94, "101": 135, "103": 125, "104": 191, "105": 192, "106": 193, "107": 194, "108": 195, "109": 196, "110": 197, "111": 198, "112": 199, "113": 200, "114": 201, "115": 202, "127": 121, "128": 123, "129": 122, "133": 129, "135": 97, "137": 132, "138": 100, "139": 102, "144": 130, "145": 131, "146": 98, "147": 99, "148": 93, "224": 37, "225": 50, "226": 64, "227": 133, "228": 105, "229": 62, "230": 108, "231": 134};
+const webPhysicalKeys = new Set();
+function webPeerKeyMap() {
+  const platform = sessionState.peerPlatform || '';
+  if (/^windows$/i.test(platform)) return WEB_WINDOWS_SCAN;
+  if (/^linux$/i.test(platform)) return WEB_LINUX_SCAN;
+  return null;
+}
+function hasPhysicalWebPeer() { return webPeerKeyMap() !== null; }
+function webUsesRemoteLayout() {
+  return typeof window.getByName === 'function' &&
+    window.getByName('option:session', 'keyboard_mode') === 'map';
+}
+// Legacy Flutter events contain a physical VK label, not the committed browser character.
+const webLegacyCharacters = new Map();
+let webBrowserLockModes = 0;
+function rememberWebLockModes(event) {
+  if (typeof event.getModifierState !== 'function') return;
+  webBrowserLockModes = (event.getModifierState('CapsLock') ? 2 : 0) |
+    (event.getModifierState('NumLock') ? 4 : 0);
+}
+window.addEventListener('keyup', rememberWebLockModes, {capture:true});
+window.addEventListener('keydown', event => {
+  rememberWebLockModes(event);
+  const code = event.code || '';
+  let label = /^Key[A-Z]$/.test(code) ? 'VK_' + code.slice(3) :
+    /^Digit[0-9]$/.test(code) ? 'VK_' + code.slice(5) :
+    {Minus:'VK_MINUS',Equal:'VK_PLUS',BracketLeft:'VK_LBRACKET',BracketRight:'VK_RBRACKET',
+     Semicolon:'VK_SEMICOLON',Quote:'VK_QUOTE',Comma:'VK_COMMA',Period:'VK_PERIOD',
+     Slash:'VK_SLASH',Backslash:'VK_BACKSLASH',Backquote:'VK_BACKQUOTE'}[code];
+  if (label) webLegacyCharacters.set(label, {key:event.key || '',time:Date.now()});
+}, {capture:true});
+function sendPhysicalWebKey(usage, down, locks = 0) {
+  const scan = (webPeerKeyMap() || {})[usage];
+  if (scan === undefined) return false;
+  let fields = pbConcat(pbBool(1,down),pbUint32(4,scan),pbUint32(9,1));
+  if (locks & 2) fields = pbConcat(fields,pbUint32(8,3));
+  if (usage >= 84 && usage <= 99 && (locks & 4)) fields = pbConcat(fields,pbUint32(8,63));
+  relaySend(wrapMsg(MSG_MSG.KEY_EVENT, fields));
+  if (down) webPhysicalKeys.add(usage); else webPhysicalKeys.delete(usage);
+  return true;
+}
+
+function webInputAvailable() {
+  return !sessionState.closed && sessionState.loggedIn && !sessionState.isFileTransfer
+    && !sessionState.isViewCamera;
+}
+
+function sendWebKey(control, text, down, press, modifiers, translated = true) {
+  let inner = pbConcat(pbBool(1, down), pbBool(2, press));
+  if (control !== undefined) {
+    inner = pbConcat(inner, pbUint32(3, control));
+  } else {
+    // A browser character is already translated by the local layout. Send Unicode once.
+    if (!down && !press) return;
+    const hotkey = !translated || modifiers.some(m => [1, 75, 4, 74, 23, 64].includes(m));
+    const scalars = Array.from(text || '');
+    if (!scalars.length) return;
+    if (scalars.length === 1) {
+      inner = pbConcat(inner, pbUint32(hotkey ? 4 : 5, scalars[0].codePointAt(0)));
+    } else if (!hotkey) {
+      inner = pbConcat(inner, pbString(6, text));
+    } else return;
+    // Preserve hotkeys, but do not press Shift/CapsLock again around translated text.
+    if (!hotkey) modifiers = [];
+  }
+  for (const m of new Set(modifiers)) {
+    if (m !== control) inner = pbConcat(inner, pbUint32(8, m));
+  }
+  relaySend(wrapMsg(MSG_MSG.KEY_EVENT, inner));
+}
+
+function handleWebMapKey(obj) {
+  const usage = (parseInt(obj.usb_hid) || 0) & 0xFFFF;
+  const down = obj.down === 'true';
+  const control = USB_HID_TO_CONTROL_KEY[usage];
+  if (MAP_MODIFIER_CONTROL_KEYS.has(control)) {
+    if (down) heldMapModifiers.add(control); else heldMapModifiers.delete(control);
+  }
+  // Flutter character can be empty for Ctrl+A. Use the physical HID for hotkeys.
+  if (hasPhysicalWebPeer() && webPeerKeyMap()[usage] !== undefined &&
+      (webUsesRemoteLayout() || control !== undefined || webPhysicalKeys.has(usage) ||
+       [...heldMapModifiers].some(m => [1,75,4,74,23,64].includes(m)))) {
+    sendPhysicalWebKey(usage, down, parseInt(obj.lock_modes) || 0);
+    return;
+  }
+  const modifiers = [...heldMapModifiers];
+  const locks = parseInt(obj.lock_modes) || 0;
+  if (control !== undefined) {
+    if (locks & 2) modifiers.push(3);
+    // NumLock concerns keypad keys, not the physical navigation cluster.
+    if (usage >= 83 && usage <= 99 && (locks & 4)) modifiers.push(63);
+    sendWebKey(control, '', down, false, modifiers);
+  } else {
+    const text = obj.name || '';
+    // Dead/composition keys have no committed text; their HID is not a character.
+    if (!text || text === 'Dead' || text === 'Process' || text === 'Unidentified') return;
+    sendWebKey(undefined, text, down, false, modifiers);
+  }
+}
+
+function handleWebLegacyKey(obj) {
+  const name = obj.name || '';
+  const down = obj.down === 'true';
+  const press = obj.press === 'true';
+  const control = KEY_NAME_TO_CONTROL_KEY[name];
+  if (MAP_MODIFIER_CONTROL_KEYS.has(control)) {
+    if (down) heldMapModifiers.add(control); else heldMapModifiers.delete(control);
+  }
+  const modifiers = LEGACY_MODIFIER_KEYS.filter(([flag]) => obj[flag] === 'true')
+    .map(([, key]) => key);
+  if (hasPhysicalWebPeer()) {
+    let usage = Object.keys(USB_HID_TO_CONTROL_KEY).find(k => USB_HID_TO_CONTROL_KEY[k] === control);
+    if (control === undefined && /^VK_[A-Z]$/.test(name)) usage = name.charCodeAt(3) - 65 + 4;
+    if (usage !== undefined && (control !== undefined || modifiers.some(m => [1,75,4,74,23,64].includes(m)) || webPhysicalKeys.has(Number(usage)))) {
+      sendPhysicalWebKey(Number(usage), down || press, webBrowserLockModes);
+      if (press) sendPhysicalWebKey(Number(usage), false, webBrowserLockModes);
+      return;
+    }
+  }
+  if (control !== undefined) {
+    sendWebKey(control, '', down, press, modifiers);
+    return;
+  }
+  let text = Array.from(name).length === 1 ? name : '';
+  const browserCharacter = webLegacyCharacters.get(name);
+  if (browserCharacter && Date.now() - browserCharacter.time < 1000) {
+    const key = browserCharacter.key;
+    if (key === 'Dead' || key === 'Process' || key === 'Unidentified') return;
+    if (Array.from(key).length === 1) {
+      sendWebKey(undefined, key, down, press, modifiers);
+      return;
+    }
+  }
+  if (name.startsWith('VK_')) {
+    const suffix = name.slice(3);
+    if (/^[A-Z]$/.test(suffix)) text = suffix.toLowerCase();
+    else if (/^[0-9]$/.test(suffix)) text = suffix;
+    else text = {MINUS:'-',PLUS:'=',LBRACKET:'[',RBRACKET:']',SEMICOLON:';',
+      QUOTE:"'",COMMA:',',PERIOD:'.',SLASH:'/',BACKSLASH:'\\',BACKQUOTE:'`'}[suffix] || '';
+  }
+  if (text) sendWebKey(undefined, text, down, press, modifiers, !name.startsWith('VK_'));
+}
+
+function releaseWebModifiers() {
+  const physical = [...webPhysicalKeys];
+  webPhysicalKeys.clear();
+  const keys = [...heldMapModifiers];
+  heldMapModifiers.clear();
+  if (!webInputAvailable()) return;
+  for (const usage of physical) { try { sendPhysicalWebKey(usage, false); } catch(e) { console.warn('[WebBridge] key release:', e); } }
+  if (hasPhysicalWebPeer()) return;
+  for (const key of keys) {
+    try { sendWebKey(key, '', false, false, []); } catch(e) { console.warn('[WebBridge] key release:', e); }
+  }
+}
+window.addEventListener('blur', releaseWebModifiers);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) releaseWebModifiers();
+});
 
 function defaultUserOption(key) {
   switch (key) {
@@ -514,6 +692,8 @@ const MSG_MSG = {
   CURSOR_POS: 13,
   CURSOR_ID: 14,
   KEY_EVENT: 15,
+  CLIPBOARD: 16,
+  MULTI_CLIPBOARDS: 28,
   MISC: 19,
   PEER_INFO: 25,
   TERMINAL_ACTION: 31,
@@ -1661,6 +1841,8 @@ function closeSessionSocket(key) {
 }
 
 function closeSession() {
+  resetWebClipboard();
+  releaseWebModifiers();
   sessionState.closed = true;
   // Restore the page title the session started with.
   if (_originalTitle) {
@@ -2290,6 +2472,10 @@ function handleRelayMessage(data, alreadyDecrypted) {
       handleVideoFrame(msg[MSG_MSG.VIDEO_FRAME]);
     } else if (msg[MSG_MSG.AUDIO_FRAME]) {
       // audio frame - not handled yet
+    } else if (msg[MSG_MSG.CLIPBOARD]) {
+      handleWebClipboard(msg[MSG_MSG.CLIPBOARD]);
+    } else if (msg[MSG_MSG.MULTI_CLIPBOARDS]) {
+      handleWebClipboard(msg[MSG_MSG.MULTI_CLIPBOARDS], true);
     } else if (msg[MSG_MSG.MISC]) {
       handleMiscMessage(msg[MSG_MSG.MISC]);
     } else if (msg[MSG_MSG.TEST_DELAY]) {
@@ -2318,6 +2504,185 @@ function handleRelayMessage(data, alreadyDecrypted) {
     console.error('[WebBridge] relay message error:', e);
   }
 }
+
+// Text and image clipboard; file transfer stays separate. No background reads of the local system clipboard.
+const WEB_CLIPBOARD_LIMIT = 1024 * 1024;
+const WEB_CLIPBOARD_IMAGE_LIMIT = 16 * 1024 * 1024;
+const WEB_CLIPBOARD_PIXELS = 16 * 1024 * 1024;
+let webClipboardRevision = 0;
+let webClipboardEpoch = 0;
+let webClipboardRemote = null;
+let webClipboardStarted = false;
+let webClipboardPasteKey = false;
+let webClipboardBusy = false;
+
+function webClipboardAvailable() {
+  return !sessionState.closed && sessionState.loggedIn && !sessionState.isFileTransfer &&
+    !sessionState.isViewCamera && !sessionState.isTerminal && localStorage.getItem('option:toggle:disable-clipboard') !== 'true' &&
+    sessionState.webClipboardAllowed !== false;
+}
+function webClipboardNotice(text) {
+  console.warn('[WebBridge] Clipboard:', text);
+}
+function resetWebClipboard() {
+  webClipboardEpoch++;
+  webClipboardRevision++;
+  webClipboardRemote = null;
+  webClipboardBusy = false;
+  delete sessionState.webClipboardAllowed;
+  webClipboardStarted = false;
+  webClipboardPasteKey = false;
+}
+function setWebClipboardPermission(allowed) {
+  sessionState.webClipboardAllowed = allowed;
+  if (!allowed) { webClipboardRevision++; webClipboardEpoch++; webClipboardBusy = false; webClipboardRemote = null; }
+  if (!allowed) webClipboardNotice('Clipboard disabled by remote PC');
+}
+function validWebClipboardDimensions(width, height) {
+  return Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0 &&
+    width <= WEB_CLIPBOARD_PIXELS && height <= WEB_CLIPBOARD_PIXELS && width * height <= WEB_CLIPBOARD_PIXELS;
+}
+function validateWebClipboardPng(bytes) {
+  const signature = [137,80,78,71,13,10,26,10];
+  if (bytes.length < 33 || bytes.length > WEB_CLIPBOARD_IMAGE_LIMIT ||
+      !signature.every((v,i) => bytes[i] === v) ||
+      bytes[12] !== 73 || bytes[13] !== 72 || bytes[14] !== 68 || bytes[15] !== 82) throw Error('Invalid PNG');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(8) !== 13 || !validWebClipboardDimensions(view.getUint32(16), view.getUint32(20))) throw Error('PNG dimensions exceed limit');
+}
+function handleWebClipboard(bytes, multiple = false) {
+  if (!webClipboardAvailable()) return;
+  webClipboardRevision++;
+  webClipboardRemote = null;
+  const entries = (multiple ? parseRepeatedField(bytes, 1) : [bytes]).map(parseRendezvousFields);
+  const imagesSupported = typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function';
+  // Preserve image semantics when an application also offers a text representation.
+  for (const format of imagesSupported ? [22,21,0] : [0]) {
+    const cb = entries.find(c => (c[5] || 0) === format);
+    if (!cb) continue;
+    try {
+      let content = cb[2] instanceof Uint8Array ? cb[2] : new Uint8Array(0);
+      const limit = format === 0 ? WEB_CLIPBOARD_LIMIT : format === 21 ? WEB_CLIPBOARD_PIXELS * 4 : WEB_CLIPBOARD_IMAGE_LIMIT;
+      if (content.length > limit) throw Error('Clipboard exceeds limit');
+      if (cb[1]) content = zstdDecompress(content);
+      if (!content || content.length > limit) throw Error('Cannot decode clipboard');
+      if (format === 0) {
+        webClipboardRemote = {format, text:new TextDecoder('utf-8', {fatal:true}).decode(content)};
+      } else {
+        if (format === 22) validateWebClipboardPng(content);
+        const width = cb[3] || 0, height = cb[4] || 0;
+        if (format === 21 && (!validWebClipboardDimensions(width,height) || content.length !== width * height * 4)) throw Error('Invalid RGBA dimensions');
+        webClipboardRemote = {format, content, width, height};
+      }
+      void copyWebClipboard();
+      return;
+    } catch (e) { webClipboardNotice(e.message); return; }
+  }
+  webClipboardNotice('Remote clipboard has no supported text/image');
+}
+async function sendWebClipboard() {
+  if (!webClipboardAvailable() || webClipboardBusy) return false;
+  const epoch = webClipboardEpoch;
+  webClipboardBusy = true;
+  try {
+    let content, format = 0;
+    if (typeof navigator.clipboard.read === 'function') {
+      const items = await navigator.clipboard.read();
+      if (epoch !== webClipboardEpoch || !webClipboardAvailable()) return false;
+      const image = items.find(item => item.types.includes('image/png'));
+      const item = image || items.find(item => item.types.includes('text/plain'));
+      if (!item) throw Error('Clipboard has no text or image');
+      const blob = await item.getType(image ? 'image/png' : 'text/plain');
+      format = image ? 22 : 0;
+      if (blob.size > (image ? WEB_CLIPBOARD_IMAGE_LIMIT : WEB_CLIPBOARD_LIMIT)) throw Error('Clipboard exceeds limit');
+      content = new Uint8Array(await blob.arrayBuffer());
+    } else {
+      content = new TextEncoder().encode(await navigator.clipboard.readText());
+    }
+    if (epoch !== webClipboardEpoch || !webClipboardAvailable()) return false;
+    if (format === 22) validateWebClipboardPng(content);
+    else if (content.length > WEB_CLIPBOARD_LIMIT) throw Error('Text exceeds limit');
+    relaySend(wrapMsg(MSG_MSG.CLIPBOARD, pbConcat(pbBytes(2, content), pbUint32(5, format))));
+    return true;
+  } catch (e) {
+    if (epoch === webClipboardEpoch) webClipboardNotice('Could not paste: ' + e.message + '; check browser clipboard permission');
+    return false;
+  } finally { if (epoch === webClipboardEpoch) webClipboardBusy = false; }
+}
+async function copyWebClipboard() {
+  if (!webClipboardAvailable() || webClipboardRemote === null) return;
+  const epoch = webClipboardEpoch, revision = webClipboardRevision, clip = webClipboardRemote;
+  try {
+    if (clip.format === 0) {
+      await navigator.clipboard.writeText(clip.text);
+    } else {
+      let blob;
+      if (clip.format === 22) blob = new Blob([clip.content], {type:'image/png'});
+      else {
+        const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(clip.width,clip.height) : document.createElement('canvas');
+        canvas.width = clip.width; canvas.height = clip.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw Error('Image conversion unavailable');
+        context.putImageData(new ImageData(new Uint8ClampedArray(clip.content),clip.width,clip.height),0,0);
+        blob = canvas.convertToBlob ? await canvas.convertToBlob({type:'image/png'}) :
+          await new Promise((resolve,reject) => canvas.toBlob(b => b ? resolve(b) : reject(Error('PNG conversion failed')), 'image/png'));
+      }
+      if (epoch !== webClipboardEpoch || revision !== webClipboardRevision || !webClipboardAvailable()) return;
+      if (blob.size > WEB_CLIPBOARD_IMAGE_LIMIT) throw Error('PNG exceeds limit');
+      await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+    }
+  } catch (e) {
+    if (epoch === webClipboardEpoch && revision === webClipboardRevision) webClipboardNotice('Remote copy blocked: ' + e.message + '; check browser clipboard permission');
+  }
+}
+function updateWebClipboardOption() {
+  const disabled = localStorage.getItem('option:toggle:disable-clipboard') === 'true';
+  if (disabled) {
+    webClipboardEpoch++;
+    webClipboardRevision++;
+    webClipboardRemote = null;
+    webClipboardBusy = false;
+  }
+  if (!webClipboardStarted || sessionState.closed || !sessionState.loggedIn) return;
+  relaySend(wrapMsg(MSG_MSG.MISC, pbBytes(7, pbUint32(8, disabled ? 2 : 1))));
+}
+function startWebClipboard() {
+  if (sessionState.closed || !sessionState.loggedIn || sessionState.isFileTransfer ||
+      sessionState.isViewCamera || sessionState.isTerminal || webClipboardStarted) return;
+  webClipboardStarted = true;
+  updateWebClipboardOption();
+}
+function pasteWebClipboardShortcut() {
+  if (hasPhysicalWebPeer()) {
+    const ctrlHeld = webPhysicalKeys.has(224) || webPhysicalKeys.has(228);
+    if (!ctrlHeld) sendPhysicalWebKey(224, true);
+    sendPhysicalWebKey(25, true);
+    sendPhysicalWebKey(25, false);
+    if (!ctrlHeld) sendPhysicalWebKey(224, false);
+  } else {
+    sendWebKey(undefined, 'v', false, true, [4], false);
+  }
+}
+window.addEventListener('keydown', event => {
+  if (!webClipboardAvailable() || event.code !== 'KeyV' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+  if (event.target?.closest?.('input,textarea,[contenteditable="true"]')) return;
+  if (!navigator.clipboard?.readText && !navigator.clipboard?.read) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  webClipboardPasteKey = true;
+  if (event.repeat || webClipboardBusy) return;
+  const epoch = webClipboardEpoch;
+  // Start clipboard read during the trusted key gesture. Forward paste only after Clipboard.
+  void sendWebClipboard().then(sent => {
+    if (sent && epoch === webClipboardEpoch && webClipboardAvailable()) pasteWebClipboardShortcut();
+  });
+}, {capture:true});
+window.addEventListener('keyup', event => {
+  if (event.code !== 'KeyV' || !webClipboardPasteKey) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  webClipboardPasteKey = false;
+}, {capture:true});
 
 // Handle a message from the WebRTC data channel.
 // The data channel uses DTLS encryption (built into WebRTC), so we skip secretbox decryption.
@@ -3061,6 +3426,7 @@ function handlePeerInfo(piBytes) {
   const username = pi[1] instanceof Uint8Array ? dec.decode(pi[1]) : '';
   const hostname = pi[2] instanceof Uint8Array ? dec.decode(pi[2]) : '';
   const platform = pi[3] instanceof Uint8Array ? dec.decode(pi[3]) : '';
+  sessionState.peerPlatform = platform;
   const currentDisplay = pi[5] || 0;
   const sasEnabled = pi[6] ? 'true' : 'false';
   const version = pi[7] instanceof Uint8Array ? dec.decode(pi[7]) : '';
@@ -3188,6 +3554,7 @@ function handlePeerInfo(piBytes) {
       upsertRecentPeerField(sessionState.peerId, 'password', pwd);
     }
   }
+  startWebClipboard();
   console.log('[WebBridge] PeerInfo fired: displays=', displays.length, 'version=', version, 'resolutions=', resolutions.length);
 }
 
@@ -3447,6 +3814,7 @@ function handleMiscMessage(miscBytes) {
     const permId = pi[1] || 0;
     const enabled = pi[2] ? true : false;
     const permName = PERM_NAMES[permId] || ('unknown_' + permId);
+    if (permId === PERM.CLIPBOARD) setWebClipboardPermission(enabled);
     console.log('[WebBridge] Permission:', permName, 'enabled:', enabled);
     fireSessionEvent('permission', JSON.stringify({ name: permName, value: enabled ? 'true' : 'false' }));
   }
@@ -3771,117 +4139,13 @@ window.setByName = function(name, value) {
         return '';
       }
       case 'flutter_key_event': {
-        try {
-          const obj = JSON.parse(value);
-          const usbHid = parseInt(obj.usb_hid) || 0;
-          const name = obj.name || '';
-          const isDown = obj.down === 'true';
-          const modifiers = [];
-          if (obj.lock_modes) {
-            const lm = parseInt(obj.lock_modes) || 0;
-            if (lm & 2) modifiers.push(3);   // CapsLock
-            if (lm & 4) modifiers.push(63);  // NumLock
-          }
-          // Use Legacy mode (mode=0) with ASCII character code for cross-platform compatibility.
-          // Map mode requires platform-specific keycodes which we don't have on web.
-          const chr = name.length === 1 ? name.charCodeAt(0) : 0;
-          let inner = pbConcat(
-            pbBool(1, isDown),
-            pbBool(2, isDown)
-          );
-          let controlKey = 0;
-          if (chr > 0) {
-            inner = pbConcat(inner, pbUint32(4, chr));
-          } else if (usbHid > 0) {
-            // For special keys, map USB HID to ControlKey enum (field 3)
-            const usageId = usbHid & 0xFFFF;
-            const ctrlKey = USB_HID_TO_CONTROL_KEY[usageId];
-            if (ctrlKey !== undefined) {
-              controlKey = ctrlKey;
-              inner = pbConcat(inner, pbUint32(3, ctrlKey));
-            } else {
-              // Unknown special key: fall back to chr with Legacy mode
-              inner = pbConcat(inner, pbUint32(4, usbHid));
-            }
-          }
-          if (MAP_MODIFIER_CONTROL_KEYS.has(controlKey)) {
-            if (isDown) heldMapModifiers.add(controlKey);
-            else heldMapModifiers.delete(controlKey);
-          } else {
-            for (const m of heldMapModifiers) {
-              if (m !== controlKey) modifiers.push(m);
-            }
-          }
-          for (const m of modifiers) {
-            inner = pbConcat(inner, pbUint32(8, m));
-          }
-          const msgBytes = wrapMsg(MSG_MSG.KEY_EVENT, inner);
-          dbg('[WebBridge] flutter_key_event: hid:', usbHid, 'down:', isDown,
-              'chr:', chr, 'controlKey:', controlKey, 'modifiers:', modifiers,
-              'bytes:', msgBytes.length);
-          relaySend(msgBytes);
-        } catch(e) { console.warn('[WebBridge] flutter_key_event error:', e); }
+        try { handleWebMapKey(JSON.parse(value)); }
+        catch(e) { console.warn('[WebBridge] map input:', e); }
         return '';
       }
       case 'input_key': {
-        try {
-          const obj = JSON.parse(value);
-          const name = obj.name || '';
-          const isDown = obj.down === 'true';
-          const isPress = obj.press === 'true' || (obj.press === undefined && isDown);
-          let chr = 0;
-          if (name.length === 1) {
-            chr = name.charCodeAt(0);
-          } else if (name.startsWith('VK_')) {
-            const suffix = name.substring(3);
-            if (suffix.length === 1 && suffix >= 'A' && suffix <= 'Z') {
-              chr = suffix.toLowerCase().charCodeAt(0);
-            } else if (suffix === 'SPACE') chr = 32;
-            else if (suffix === 'ENTER') chr = 13;
-            else if (suffix === 'TAB') chr = 9;
-            else if (suffix === 'BACK') chr = 8;
-            else if (suffix === 'ESCAPE') chr = 27;
-            else if (suffix === 'MINUS') chr = 45;
-            else if (suffix === 'PLUS') chr = 61;
-            else if (suffix === 'LBRACKET') chr = 91;
-            else if (suffix === 'RBRACKET') chr = 93;
-            else if (suffix === 'SEMICOLON') chr = 59;
-            else if (suffix === 'QUOTE') chr = 39;
-            else if (suffix === 'COMMA') chr = 44;
-            else if (suffix === 'PERIOD') chr = 46;
-            else if (suffix === 'SLASH') chr = 47;
-            else if (suffix === 'BACKSLASH') chr = 92;
-            else if (suffix === 'BACKQUOTE') chr = 96;
-            else if (suffix.length === 1 && suffix >= '0' && suffix <= '9') {
-              chr = suffix.charCodeAt(0);
-            } else if (suffix.startsWith('NUMPAD') && suffix.length === 7) {
-              chr = suffix.charCodeAt(6); // VK_NUMPAD0-9
-            }
-          }
-          let inner = pbConcat(
-            pbBool(1, isDown),
-            pbBool(2, isPress)
-          );
-          // control_key and chr are two arms of the same oneof, so the character mapping wins.
-          const controlKey = chr === 0 ? KEY_NAME_TO_CONTROL_KEY[name] : undefined;
-          if (chr > 0) {
-            inner = pbConcat(inner, pbUint32(4, chr));
-          } else if (controlKey !== undefined) {
-            inner = pbConcat(inner, pbUint32(3, controlKey));
-          }
-          // KeyEvent.modifiers (field 8). Leaving these off was why every shortcut in the remote
-          // picture did nothing: the peer only presses Ctrl/Alt/Shift around a key when the event
-          // names them, so a held Ctrl was invisible and Ctrl+C arrived as a bare 'c'.
-          for (const [flag, selfKey, otherKey] of LEGACY_MODIFIER_KEYS) {
-            if (obj[flag] === 'true' && controlKey !== selfKey && controlKey !== otherKey) {
-              inner = pbConcat(inner, pbUint32(8, selfKey));
-            }
-          }
-          const msgBytes = wrapMsg(MSG_MSG.KEY_EVENT, inner);
-          dbg('[WebBridge] input_key: name:', name, 'down:', isDown, 'chr:', chr,
-              'controlKey:', controlKey === undefined ? '-' : controlKey, 'bytes:', msgBytes.length);
-          relaySend(msgBytes);
-        } catch(e) { console.warn('[WebBridge] input_key error:', e); }
+        try { handleWebLegacyKey(JSON.parse(value)); }
+        catch(e) { console.warn('[WebBridge] legacy input:', e); }
         return '';
       }
       case 'input_string': {
@@ -4391,6 +4655,7 @@ window.setByName = function(name, value) {
         const key = `option:toggle:${value}`;
         const cur = localStorage.getItem(key);
         localStorage.setItem(key, cur === 'true' ? 'false' : 'true');
+        if (value === 'disable-clipboard') updateWebClipboardOption();
         return '';
       }
       case 'options': {
