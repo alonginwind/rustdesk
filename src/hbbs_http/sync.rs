@@ -348,7 +348,16 @@ fn heartbeat_url() -> String {
     format!("{}/api/heartbeat", url)
 }
 
-fn handle_config_options(config_options: HashMap<String, String>) {
+fn handle_config_options(mut config_options: HashMap<String, String>) {
+    // Check for reset-pwd strategy: clear local password to fall back to preset password.
+    // Remove it so it won't be persisted to config file (one-time command).
+    if config_options.remove("reset-pwd").map_or(false, |v| v == "Y") {
+        log::info!("Resetting local permanent password due to reset-pwd strategy");
+        if let Err(e) = Config::set_permanent_password_storage_for_sync("", "") {
+            log::error!("Failed to reset local password: {}", e);
+        }
+    }
+
     let mut options = Config::get_options();
     let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
     config_options
