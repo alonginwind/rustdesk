@@ -2551,11 +2551,10 @@ jobs:
             flatpak/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
   build-rustdesk-web:
-    if: False
     name: build-rustdesk-web
     runs-on: ubuntu-22.04
     permissions:
-      contents: read
+      contents: write
     strategy:
       fail-fast: false
     env:
@@ -2569,7 +2568,8 @@ jobs:
       - name: Prepare env
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y wget npm
+          sudo apt-get install -y python3-pip wget
+          python3 -m pip install rjsmin
 
       - name: Install flutter
         uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225  # v2.12.0; https://github.com/subosito/flutter-action/issues/277
@@ -2594,32 +2594,56 @@ jobs:
             bash .github/patches/apply_flutter_3.44_web_patches.sh
           fi
 
-      # https://rustdesk.com/docs/en/dev/build/web/
+      # libs/web_bridge is excluded from the workspace and pins current stable + wasm32 in its
+      # own rust-toolchain.toml, instead of the repo's 1.75.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: web
+
+      - name: Install wasm-pack
+        shell: bash
+        run: |
+          # wasm-pack has no pinned source in this repo; fetch the upstream release the bridge is
+          # built with locally (sha256 as published on the release page).
+          wget -P /tmp https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz
+          echo "c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a  /tmp/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/wasm-pack
+          tar xzf /tmp/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz --strip-components 1 -C /tmp/wasm-pack
+          sudo mv /tmp/wasm-pack/wasm-pack /usr/local/bin/
+          wasm-pack --version
+
+      # Mirrors the `web` target of ./run.sh: wasm bridge -> load_bridge.js -> flutter build web
       - name: Build web
         shell: bash
         run: |
-          pushd flutter/web/js
-          npm install yarn -g
-          npm install typescript -g
-          npm install protoc -g
-          # Install protoc first, see: https://google.github.io/proto-lens/installing-protoc.html
-          npm install ts-proto
-          # Only works with vite <= 2.8, see: https://github.com/vitejs/vite/blob/main/docs/guide/build.md#chunking-strategy
-          npm install vite@2.8
-          yarn install && yarn build
+          pushd libs/web_bridge
+          wasm-pack build --release --target web --out-dir ../../flutter/web/pkg
           popd
 
-          pushd flutter/web
-          wget https://github.com/rustdesk/doc.rustdesk.com/releases/download/console/web_deps.tar.gz
-          tar xzf web_deps.tar.gz
-          popd
+          python3 ./extract_translations.py
 
           pushd flutter
+          rm web/pkg/.gitignore
+          rm web/pkg/package.json
+          rm web/pkg/web_bridge.d.ts
+          rm web/pkg/web_bridge_bg.wasm.d.ts
           flutter build web --release
-          cd build
-          cp ../web/README.md web
-          # TODO: Remove the following line when the web is almost complete.
-          echo -e "\n\nThis build is for preview and not full functionality." >> web/README.md
+          rm build/web/load_bridge.tpl.js
+          rm -rf web/pkg/
+          rm web/load_bridge.js
+          sed -i 's/\r$//' build/web/assets/NOTICES
+          popd
+
+      - name: Package web
+        shell: bash
+        run: |
+          pushd flutter/build
           dir_name="rustdesk-${{ env.VERSION }}-${{ env.RELEASE_NAME }}"
           mv web "${dir_name}" && tar czf "${dir_name}".tar.gz "${dir_name}"
           sha256sum "${dir_name}".tar.gz
