@@ -1702,13 +1702,7 @@ function closeSession() {
   window._downloadJobs = {};
   window._uploadJobs = {};
   window._cancelledJobs = new Set();
-  if (_videoDecoder) {
-    try {
-      _videoDecoder.close();
-    } catch(e) {}
-    _videoDecoder = null;
-    _videoCodec = '';
-  }
+  resetWebVideoDecoders();
   // Trigger reload of recent peers when session closes
   setTimeout(() => {
     const evt = { name: 'load_recent_peers', peers: JSON.stringify(readRecentPeers()) };
@@ -3062,6 +3056,7 @@ function handlePeerInfo(piBytes) {
   const hostname = pi[2] instanceof Uint8Array ? dec.decode(pi[2]) : '';
   const platform = pi[3] instanceof Uint8Array ? dec.decode(pi[3]) : '';
   const currentDisplay = pi[5] || 0;
+  sessionState.webSelectedDisplay = currentDisplay;
   const sasEnabled = pi[6] ? 'true' : 'false';
   const version = pi[7] instanceof Uint8Array ? dec.decode(pi[7]) : '';
   const platformAdditions = pi[12] instanceof Uint8Array ? dec.decode(pi[12]) : '';
@@ -3224,21 +3219,29 @@ let _alternativeCodecs = { vp8: false, av1: false, h264: false, h265: false };
   dbg('[WebBridge] alternative codecs:', JSON.stringify(_alternativeCodecs));
 })();
 
-let _videoDecoder = null;
-let _videoCodec = '';
+// Independent decoder state: delta frames from different displays must never share references.
+const webVideoDecoders = new Map();
 let _rgbaCanvas = null;
 let _rgbaCtx = null;
-let _videoFrameCount = 0;
-let _videoDecodeErrors = 0;
-// A single decoder serves every display, and its output callback fires asynchronously
-// without saying which display the frame belongs to. VideoDecoder emits in decode order,
-// so the display number is queued when a chunk goes in and dequeued when the frame comes
-// out; anything else paints display 1's frames onto display 0.
-let _videoDisplayQueue = [];
-
-// Re-initialising the decoder on every frame after a hard error would spin, so give up
-// after a few and let the next session start clean.
 const MAX_VIDEO_DECODE_ERRORS = 10;
+
+function webVideoDecoderConfig(codec) {
+  return {codec, optimizeForLatency:true};
+}
+
+function resetWebVideoDecoders(display) {
+  for (const [id, state] of webVideoDecoders) {
+    if (display !== undefined && id !== display) continue;
+    webVideoDecoders.delete(id);
+    try { state.decoder.close(); } catch(e) {}
+  }
+}
+
+function requestWebVideoRefresh() {
+  if (sessionState.closed || !sessionState.loggedIn || sessionState.isFileTransfer || sessionState.isViewCamera) return;
+  try { relaySend(wrapMsg(MSG_MSG.MISC, pbBool(10, true))); }
+  catch(e) { console.warn('[WebBridge] video refresh request failed:', e); }
+}
 
 function ensureRgbaCanvas(w, h) {
   if (!_rgbaCanvas) {
@@ -3263,124 +3266,82 @@ function videoFrameToRgba(videoFrame, display) {
   }
 }
 
-function initVideoDecoder(codec) {
-  if (_videoDecoder && _videoCodec === codec) return;
-  if (_videoDecoder) {
-    try { _videoDecoder.close(); } catch(e) {}
-    _videoDecoder = null;
-  }
-  if (!('VideoDecoder' in globalThis)) {
-    console.error('[WebBridge] WebCodecs VideoDecoder not supported');
-    return;
-  }
-  _videoFrameCount = 0;
-  _videoDecodeErrors = 0;
-  _videoDisplayQueue.length = 0;
-  _videoCodec = codec;
-  _videoDecoder = new VideoDecoder({
-    output: (frame) => {
-      _videoFrameCount++;
-      const display = _videoDisplayQueue.length ? _videoDisplayQueue.shift() : 0;
-      if (_videoFrameCount <= 5) dbg('[WebBridge] VideoDecoder output frame', _videoFrameCount, 'display:', display, 'size:', frame.displayWidth, 'x', frame.displayHeight);
+function initVideoDecoder(codec, display) {
+  let state = webVideoDecoders.get(display);
+  if (state && state.codec === codec && state.decoder.state !== 'closed') return state;
+  resetWebVideoDecoders(display);
+  if (!('VideoDecoder' in globalThis)) return null;
+  state = {codec, decoder:null, needsKey:true, errors:0, lastRefresh:0};
+  state.decoder = new VideoDecoder({
+    output: frame => {
+      // Closed/replaced decoder callbacks must not paint a later session.
+      if (webVideoDecoders.get(display) !== state) { frame.close(); return; }
       try {
-        if (typeof window.onVideoFrame === 'function') {
-          // Zero-readback path: Dart's WebVideoFrameQueue owns the frame and closes it
-          window.onVideoFrame(display, frame);
-        } else {
-          // RGBA fallback path: convert and close immediately
-          videoFrameToRgba(frame, display);
-          try { frame.close(); } catch(e) {}
-        }
-      } catch(e) { console.warn('[WebBridge] video output error:', e); }
+        if (typeof window.onVideoFrame === 'function') window.onVideoFrame(display, frame);
+        else { try { videoFrameToRgba(frame, display); } finally { frame.close(); } }
+      } catch(e) { try { frame.close(); } catch(_) {} console.warn('[WebBridge] video output:', e); }
     },
-    error: (e) => {
-      _videoDecodeErrors++;
-      console.error('[WebBridge] VideoDecoder error:', e);
-      // The decoder is unusable once it errors; drop it so the next frame re-inits, and
-      // drop the queue with it since those chunks will never come back out.
-      _videoDisplayQueue.length = 0;
-      _videoDecoder = null;
+    error: error => {
+      if (webVideoDecoders.get(display) !== state) return;
+      state.errors++;
+      console.warn('[WebBridge] display decoder error:', display, error);
+      if (state.errors <= MAX_VIDEO_DECODE_ERRORS) {
+        state.needsKey = true;
+        try { state.decoder.reset(); state.decoder.configure(webVideoDecoderConfig(codec)); }
+        catch(e) { resetWebVideoDecoders(display); }
+        requestWebVideoRefresh();
+      }
     }
   });
-  const config = { codec: codec, optimizeForLatency: true };
-  _videoDecoder.configure(config);
-  dbg('[WebBridge] VideoDecoder initialized:', codec);
+  const config = webVideoDecoderConfig(codec);
+  state.decoder.configure(config);
+  webVideoDecoders.set(display, state);
+  return state;
 }
 
-function parseEncodedFrames(containerBytes) {
-  // EncodedVideoFrames is `repeated EncodedVideoFrame frames = 1`.
-  return parseRepeatedField(containerBytes, 1).map((b) => {
-    const fd = parseRendezvousFields(b);
-    return {
-      data: fd[1] || new Uint8Array(0),
-      key: fd[2] ? true : false,
-      // pts is int64 milliseconds since the epoch, which needs 41 bits; only the wasm
-      // scanner reads it at full width. WebCodecs wants microseconds, hence * 1000.
-      pts: fd[3] || 0
-    };
+function parseEncodedFrames(bytes) {
+  return parseRepeatedField(bytes, 1).map(b => {
+    const f = parseRendezvousFields(b);
+    return {data:f[1] || new Uint8Array(0), key:!!f[2], pts:f[3] || 0};
   });
 }
 
-function handleVideoFrame(vfBytes) {
-  dbg('[WebBridge] handleVideoFrame called, bytes:', vfBytes.length);
-  const vf = parseRendezvousFields(vfBytes);
-  const display = vf[VF_CODEC.DISPLAY] || 0;
-  let codecStr = '';
-  let encodedContainer = null;
-  let codecName = '';
-
-  if (vf[VF_CODEC.VP9]) {
-    codecStr = CODEC_STRINGS.vp9; codecName = 'VP9';
-    encodedContainer = vf[VF_CODEC.VP9];
-  } else if (vf[VF_CODEC.VP8]) {
-    codecStr = CODEC_STRINGS.vp8; codecName = 'VP8';
-    encodedContainer = vf[VF_CODEC.VP8];
-  } else if (vf[VF_CODEC.H264]) {
-    codecStr = CODEC_STRINGS.h264; codecName = 'H264';
-    encodedContainer = vf[VF_CODEC.H264];
-  } else if (vf[VF_CODEC.H265]) {
-    codecStr = CODEC_STRINGS.h265; codecName = 'H265';
-    encodedContainer = vf[VF_CODEC.H265];
-  } else if (vf[VF_CODEC.AV1]) {
-    codecStr = CODEC_STRINGS.av1; codecName = 'AV1';
-    encodedContainer = vf[VF_CODEC.AV1];
-  } else if (vf[VF_CODEC.RGB] || vf[VF_CODEC.YUV]) {
-    handleRawVideo(vf, display);
-    return;
-  } else {
+function handleVideoFrame(bytes) {
+  const vf = parseRendezvousFields(bytes), display = vf[VF_CODEC.DISPLAY] || 0;
+  // Current Flutter renderer handles one selected monitor. Ignore queued old-monitor frames.
+  if (sessionState.webSelectedDisplay !== undefined && display !== sessionState.webSelectedDisplay) return;
+  let codec, container;
+  for (const [field, name] of [[VF_CODEC.VP9,'vp9'],[VF_CODEC.VP8,'vp8'],
+    [VF_CODEC.H264,'h264'],[VF_CODEC.H265,'h265'],[VF_CODEC.AV1,'av1']]) {
+    if (vf[field]) { codec = CODEC_STRINGS[name]; container = vf[field]; break; }
+  }
+  if (!container) {
+    if (vf[VF_CODEC.RGB] || vf[VF_CODEC.YUV]) handleRawVideo(vf, display);
     return;
   }
-
-  if (!encodedContainer) return;
-
-  if (_videoFrameCount === 0) console.log('[WebBridge] First video frame, codec:', codecName, 'container bytes:', encodedContainer.length);
-
-  if (_videoDecodeErrors > MAX_VIDEO_DECODE_ERRORS) return;
-
-  try {
-    initVideoDecoder(codecStr);
-  } catch(e) {
-    console.error('[WebBridge] VideoDecoder init failed:', e);
-    return;
-  }
-  // initVideoDecoder returns early when WebCodecs is missing, leaving the decoder null.
-  if (!_videoDecoder) return;
-
-  const frames = parseEncodedFrames(encodedContainer);
-  for (const frame of frames) {
-    if (frame.data.length === 0) continue;
-    _videoDisplayQueue.push(display);
+  let state;
+  try { state = initVideoDecoder(codec, display); }
+  catch(e) { console.warn('[WebBridge] display decoder init:', display, e); return; }
+  if (!state || state.errors > MAX_VIDEO_DECODE_ERRORS) return;
+  for (const frame of parseEncodedFrames(container)) {
+    if (!frame.data.length) continue;
+    if (state.needsKey && !frame.key) {
+      if (Date.now() - state.lastRefresh > 1500) {
+        state.lastRefresh = Date.now(); requestWebVideoRefresh();
+      }
+      continue;
+    }
     try {
-      _videoDecoder.decode(new EncodedVideoChunk({
-        type: frame.key ? 'key' : 'delta',
-        timestamp: Number(frame.pts) * 1000,
-        data: frame.data
-      }));
+      state.decoder.decode(new EncodedVideoChunk({type:frame.key?'key':'delta',
+        timestamp:Number(frame.pts)*1000, data:frame.data}));
+      state.needsKey = false;
     } catch(e) {
-      // The chunk never made it in, so its queued display number has to come back out or
-      // every later frame is attributed to the wrong display.
-      _videoDisplayQueue.pop();
-      console.warn('[WebBridge] VideoDecoder decode error:', e);
+      state.needsKey = true; state.errors++;
+      console.warn('[WebBridge] display decode:', display, e);
+      if (state.errors <= MAX_VIDEO_DECODE_ERRORS) {
+        try { state.decoder.reset(); state.decoder.configure(webVideoDecoderConfig(codec)); } catch(_) {}
+        requestWebVideoRefresh();
+      }
     }
   }
 }
@@ -3892,11 +3853,15 @@ window.setByName = function(name, value) {
         try {
           const obj = JSON.parse(value);
           const displayIdx = (obj.value && obj.value[0]) || 0;
+          sessionState.webSelectedDisplay = Number(displayIdx);
+          resetWebVideoDecoders();
           // SwitchDisplay: display=1 (int32), x=2, y=3, width=4, height=5, cursor_embedded=6
           const sdInner = pbUint32(1, displayIdx);
           // Misc: switch_display=field 5
           const miscInner = pbBytes(5, sdInner);
           relaySend(wrapMsg(MSG_MSG.MISC, miscInner));
+          relaySend(wrapMsg(MSG_MSG.MISC, pbBytes(30, pbUint32(3, Number(displayIdx)))));
+          requestWebVideoRefresh();
           console.log('[WebBridge] switch_display:', displayIdx);
         } catch(e) { console.warn('[WebBridge] switch_display error:', e); }
         return '';
