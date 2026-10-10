@@ -1661,6 +1661,7 @@ function closeSessionSocket(key) {
 }
 
 function closeSession() {
+  resetWebAudio();
   sessionState.closed = true;
   // Restore the page title the session started with.
   if (_originalTitle) {
@@ -2289,7 +2290,7 @@ function handleRelayMessage(data, alreadyDecrypted) {
       dbg('[WebBridge] handleRelayMessage: VIDEO_FRAME, bytes:', msg[MSG_MSG.VIDEO_FRAME].length);
       handleVideoFrame(msg[MSG_MSG.VIDEO_FRAME]);
     } else if (msg[MSG_MSG.AUDIO_FRAME]) {
-      // audio frame - not handled yet
+      handleWebAudioFrame(msg[MSG_MSG.AUDIO_FRAME]);
     } else if (msg[MSG_MSG.MISC]) {
       handleMiscMessage(msg[MSG_MSG.MISC]);
     } else if (msg[MSG_MSG.TEST_DELAY]) {
@@ -2318,6 +2319,135 @@ function handleRelayMessage(data, alreadyDecrypted) {
     console.error('[WebBridge] relay message error:', e);
   }
 }
+
+// Remote system audio only: Opus -> WebCodecs -> bounded Web Audio playback.
+let webAudioContext = null;
+let webAudioDecoder = null;
+let webAudioFormat = null;
+let webAudioEpoch = 0;
+let webAudioTimestamp = 0;
+let webAudioNextTime = 0;
+let webAudioAllowed = true;
+let webAudioStarted = false;
+let webAudioFailures = 0;
+const webAudioSources = new Set();
+function webAudioSupported() {
+  return typeof AudioDecoder !== 'undefined' &&
+    (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined');
+}
+function webAudioAvailable() {
+  return !sessionState.closed && sessionState.loggedIn && !sessionState.isFileTransfer &&
+    !sessionState.isViewCamera && !sessionState.isTerminal && webAudioAllowed &&
+    localStorage.getItem('option:toggle:disable-audio') !== 'true' && webAudioSupported() && webAudioFailures < 3;
+}
+function stopWebAudioPlayback() {
+  webAudioEpoch++;
+  if (webAudioDecoder) { try { webAudioDecoder.close(); } catch (_) {} }
+  webAudioDecoder = null;
+  for (const source of webAudioSources) { try { source.stop(); source.disconnect(); } catch (_) {} }
+  webAudioSources.clear();
+  if (webAudioContext) { try { void webAudioContext.close().catch(()=>{}); } catch (_) {} }
+  webAudioContext = null;
+  webAudioNextTime = webAudioTimestamp = 0;
+}
+function resetWebAudio() {
+  stopWebAudioPlayback();
+  webAudioFormat = null;
+  webAudioAllowed = true;
+  webAudioStarted = false;
+  webAudioFailures = 0;
+}
+function sendWebAudioOption() {
+  if (sessionState.closed || !sessionState.loggedIn || sessionState.isFileTransfer || sessionState.isViewCamera || sessionState.isTerminal) return;
+  relaySend(wrapMsg(MSG_MSG.MISC, pbBytes(7, pbUint32(7, webAudioAvailable() ? 1 : 2))));
+}
+function setWebAudioPermission(allowed) {
+  webAudioAllowed = allowed;
+  if (!allowed) stopWebAudioPlayback();
+}
+function updateWebAudioMute() {
+  if (localStorage.getItem('option:toggle:disable-audio') !== 'true') webAudioFailures = 0;
+  if (!webAudioAvailable()) stopWebAudioPlayback();
+  else resumeWebAudioGesture();
+  sendWebAudioOption();
+}
+function startWebAudio() {
+  if (webAudioStarted || sessionState.closed || !sessionState.loggedIn || sessionState.isFileTransfer || sessionState.isViewCamera || sessionState.isTerminal) return;
+  webAudioStarted = true;
+  sendWebAudioOption();
+  if (!webAudioSupported()) console.warn('[WebBridge] Remote audio unavailable: browser has no AudioDecoder/Web Audio');
+}
+function handleWebAudioFormat(bytes) {
+  const fields = parseRendezvousFields(bytes);
+  const sampleRate = fields[1], channels = fields[2];
+  if (![8000,12000,16000,24000,48000].includes(sampleRate) || ![1,2].includes(channels)) {
+    stopWebAudioPlayback(); webAudioFormat = null;
+    console.warn('[WebBridge] Unsupported audio format:', sampleRate, channels); return;
+  }
+  if (webAudioFormat?.sampleRate === sampleRate && webAudioFormat?.channels === channels) return;
+  stopWebAudioPlayback();
+  webAudioFormat = {sampleRate, channels};
+}
+function ensureWebAudioDecoder() {
+  if (!webAudioAvailable() || !webAudioFormat) return false;
+  if (webAudioDecoder) return true;
+  const epoch = webAudioEpoch;
+  try {
+    const Context = typeof AudioContext !== 'undefined' ? AudioContext : webkitAudioContext;
+    webAudioContext = new Context({latencyHint:'interactive'});
+    const decoder = new AudioDecoder({
+      output: data => {
+        try {
+          const context = webAudioContext;
+          if (epoch !== webAudioEpoch || !webAudioAvailable() || !context || context.state !== 'running') return;
+          if (data.numberOfFrames > 5760 || ![1,2].includes(data.numberOfChannels)) return;
+          // Drop backlog rather than accumulating seconds of latency after a pause.
+          if (webAudioNextTime - context.currentTime > 0.3 || webAudioSources.size >= 40) return;
+          const buffer = context.createBuffer(data.numberOfChannels,data.numberOfFrames,data.sampleRate);
+          for (let channel=0; channel<data.numberOfChannels; channel++)
+            data.copyTo(buffer.getChannelData(channel), {planeIndex:channel,format:'f32-planar'});
+          const source = context.createBufferSource();
+          source.buffer = buffer;
+          source.connect(context.destination);
+          source.onended = () => { webAudioSources.delete(source); source.disconnect(); };
+          const when = Math.max(context.currentTime + 0.025, webAudioNextTime);
+          webAudioSources.add(source);
+          source.start(when);
+          webAudioNextTime = when + buffer.duration;
+        } catch (e) { console.warn('[WebBridge] Audio playback:', e); }
+        finally { data.close(); }
+      },
+      error: error => {
+        if (epoch !== webAudioEpoch) return;
+        console.warn('[WebBridge] Audio decoder:', error);
+        webAudioFailures++;
+        stopWebAudioPlayback();
+        if (webAudioFailures >= 3) sendWebAudioOption();
+      }
+    });
+    webAudioDecoder = decoder;
+    decoder.configure({codec:'opus',sampleRate:webAudioFormat.sampleRate,numberOfChannels:webAudioFormat.channels});
+    return true;
+  } catch (e) { console.warn('[WebBridge] Audio init:', e); webAudioFailures++; stopWebAudioPlayback(); if (webAudioFailures >= 3) sendWebAudioOption(); return false; }
+}
+function resumeWebAudioGesture() {
+  if (!webAudioAvailable() || !ensureWebAudioDecoder()) return;
+  const context = webAudioContext;
+  if (context.state === 'suspended') void context.resume().catch(e => console.warn('[WebBridge] Audio resume:', e));
+}
+function handleWebAudioFrame(bytes) {
+  if (!webAudioAvailable() || !ensureWebAudioDecoder()) return;
+  // A suspended context must be unlocked by a real local click/key gesture.
+  if (webAudioContext.state !== 'running' || webAudioDecoder.decodeQueueSize > 30) return;
+  const fields = parseRendezvousFields(bytes), data = fields[1];
+  if (!(data instanceof Uint8Array) || !data.length || data.length > 65536) return;
+  try {
+    webAudioDecoder.decode(new EncodedAudioChunk({type:'key',timestamp:webAudioTimestamp,data}));
+    webAudioTimestamp += 10000; // Playback uses actual decoded sample counts, not this input marker.
+  } catch (e) { console.warn('[WebBridge] Audio decode:', e); webAudioFailures++; stopWebAudioPlayback(); if (webAudioFailures >= 3) sendWebAudioOption(); }
+}
+window.addEventListener('pointerdown', resumeWebAudioGesture, {capture:true});
+window.addEventListener('keydown', resumeWebAudioGesture, {capture:true});
 
 // Handle a message from the WebRTC data channel.
 // The data channel uses DTLS encryption (built into WebRTC), so we skip secretbox decryption.
@@ -3188,6 +3318,7 @@ function handlePeerInfo(piBytes) {
       upsertRecentPeerField(sessionState.peerId, 'password', pwd);
     }
   }
+  startWebAudio();
   console.log('[WebBridge] PeerInfo fired: displays=', displays.length, 'version=', version, 'resolutions=', resolutions.length);
 }
 
@@ -3447,9 +3578,11 @@ function handleMiscMessage(miscBytes) {
     const permId = pi[1] || 0;
     const enabled = pi[2] ? true : false;
     const permName = PERM_NAMES[permId] || ('unknown_' + permId);
+    if (permId === PERM.AUDIO) setWebAudioPermission(enabled);
     console.log('[WebBridge] Permission:', permName, 'enabled:', enabled);
     fireSessionEvent('permission', JSON.stringify({ name: permName, value: enabled ? 'true' : 'false' }));
   }
+  if (m[MISC.AUDIO_FORMAT]) handleWebAudioFormat(m[MISC.AUDIO_FORMAT]);
   if (m[MISC.OPTION]) {
     // Forward option messages to Dart (e.g., supported_encoding changes)
     console.log('[WebBridge] Misc option received, bytes:', m[MISC.OPTION].length);
@@ -4391,6 +4524,7 @@ window.setByName = function(name, value) {
         const key = `option:toggle:${value}`;
         const cur = localStorage.getItem(key);
         localStorage.setItem(key, cur === 'true' ? 'false' : 'true');
+        if (value === 'disable-audio') updateWebAudioMute();
         return '';
       }
       case 'options': {
