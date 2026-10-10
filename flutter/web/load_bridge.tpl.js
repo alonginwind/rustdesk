@@ -3263,6 +3263,21 @@ function videoFrameToRgba(videoFrame, display) {
   }
 }
 
+function webVideoDecoderConfig(codec) {
+  const config = {codec, optimizeForLatency:true};
+  const nav = typeof navigator === 'undefined' ? {} : navigator;
+  const ua = nav.userAgent || '';
+  const platform = nav.userAgentData?.platform || '';
+  const linux = platform === 'Linux' || /Linux/i.test(ua);
+  const chromium = /(?:Chrome|Chromium|Edg|OPR)\//.test(ua) ||
+    (nav.userAgentData?.brands || []).some(b => /Chromium|Google Chrome|Microsoft Edge/.test(b.brand));
+  // This is the browser's OS, independent of the remote peer's platform.
+  if (linux && chromium && !/Android|Firefox/i.test(ua)) {
+    config.hardwareAcceleration = 'prefer-software';
+  }
+  return config;
+}
+
 function initVideoDecoder(codec) {
   if (_videoDecoder && _videoCodec === codec) return;
   if (_videoDecoder) {
@@ -3302,7 +3317,7 @@ function initVideoDecoder(codec) {
       _videoDecoder = null;
     }
   });
-  const config = { codec: codec, optimizeForLatency: true };
+  const config = webVideoDecoderConfig(codec);
   _videoDecoder.configure(config);
   dbg('[WebBridge] VideoDecoder initialized:', codec);
 }
