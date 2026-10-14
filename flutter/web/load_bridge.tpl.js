@@ -3727,6 +3727,7 @@ window.setByName = function(name, value) {
           const type = obj.type || '';
           const x = parseInt(obj.x) || 0;
           const y = parseInt(obj.y) || 0;
+          sessionState.webMousePosition = {x, y};
           const btn = obj.buttons || '';
           // Server mask layout: lower 3 bits = event type, upper bits = button flags (shifted by 3).
           // Event types: 0=MOVE, 1=DOWN, 2=UP, 3=WHEEL, 4=TRACKPAD, 5=MOVE_RELATIVE
@@ -3739,6 +3740,8 @@ window.setByName = function(name, value) {
           if (btn === 'left') btnFlag = MOUSE_BTN_LEFT;
           else if (btn === 'right') btnFlag = MOUSE_BTN_RIGHT;
           else if (btn === 'wheel' || btn === 'middle') btnFlag = MOUSE_BTN_WHEEL;
+          else if (btn === 'back') btnFlag = 0x08;
+          else if (btn === 'forward') btnFlag = 0x10;
           else btnFlag = parseInt(btn) || 0;
           if (type === 'down' || type === 'mousedown') {
             mask = (btnFlag << 3) | MOUSE_TYPE_DOWN;
@@ -4440,3 +4443,18 @@ window.setByName = function(name, value) {
 window.isMobile = function() {
   return isMobileDevice();
 };
+
+// Handle side buttons before Flutter/browser navigation; coordinates come from remote mouse events.
+for (const type of ['pointerdown','pointerup','mousedown','mouseup','auxclick']) {
+  window.addEventListener(type, event => {
+    if ((sessionState.closed || !sessionState.loggedIn || sessionState.isFileTransfer || sessionState.isViewCamera) || ![3,4].includes(event.button)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (type === 'pointerdown' || type === 'pointerup') {
+      const pos = sessionState.webMousePosition;
+      if (pos) window.setByName('send_mouse', JSON.stringify({
+        type:type === 'pointerdown'?'down':'up',buttons:event.button===3?'back':'forward',x:pos.x,y:pos.y
+      }));
+    }
+  }, {capture:true, passive:false});
+}
