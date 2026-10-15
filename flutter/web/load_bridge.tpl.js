@@ -3199,8 +3199,8 @@ function handlePeerInfo(piBytes) {
     try {
       const d = parseRendezvousFields(b);
       const display = {
-        x: d[1] || 0,
-        y: d[2] || 0,
+        x: fromZigzag(d[1] || 0),
+        y: fromZigzag(d[2] || 0),
         width: d[3] || 0,
         height: d[4] || 0,
         cursor_embedded: d[7] ? 1 : 0,
@@ -3520,8 +3520,8 @@ function handleMiscMessage(miscBytes) {
     const evt = {
       name: 'switch_display',
       display: String(sd[1] || 0),
-      x: String(sd[2] || 0),
-      y: String(sd[3] || 0),
+      x: String(fromZigzag(sd[2] || 0)),
+      y: String(fromZigzag(sd[3] || 0)),
       width: String(sd[4] || 0),
       height: String(sd[5] || 0),
       cursor_embedded: sd[6] ? '1' : '0',
