@@ -7,6 +7,9 @@ if [ "$1" == "android" ]; then
 elif [ "$1" == "linux" ]; then
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
     python3 ./build.py --flutter --skip-cargo
+elif [ "$1" == "aarch64" ]; then
+    export PKG_CONFIG_SYSROOT_DIR=$HOME/Documents/sysroot
+    cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release --target=aarch64-unknown-linux-gnu
 elif [ "$1" == "web" ]; then
     rm -rf flutter/build/web/*
     pushd libs/web_bridge
