@@ -3749,6 +3749,15 @@ function handleMiscMessage(miscBytes) {
 
 // --- Public API ---
 
+// Called by mainInit() via mainReloadKeyboardShortcuts(). The JS-side shortcut matcher
+// (flutter/web/js/src/shortcut_matcher.ts) lives in the maintainer's local tree and is
+// not present in this repo; store the config so it is available when the matcher loads.
+let _webShortcutConfig = null;
+window.reloadShortcuts = function(configJson) {
+  try { _webShortcutConfig = typeof configJson === 'string' ? JSON.parse(configJson) : configJson; }
+  catch(e) { console.warn('[WebBridge] reloadShortcuts parse error:', e); }
+};
+
 window.init = async function() {
   configInit();
   setTimeout(() => {
