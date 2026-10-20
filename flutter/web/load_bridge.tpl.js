@@ -926,23 +926,28 @@ function decryptFrame(cipher) {
 
 function getRendezvousWsUrl() {
   const api = getApiServer();
-  const rs = localStorage.getItem('custom-rendezvous-server');
   let host, wsPort, secure;
-
-  if (rs) {
-    const parts = rs.split(':');
-    host = parts[0];
-    const rzPort = parseInt(parts[1]) || 21116;
-    wsPort = rzPort + 2;
-    secure = false;
-  } else if (api && api !== 'http://127.0.0.1:21114') {
+  if (api && api !== 'http://127.0.0.1:21114') {
     try {
       const url = new URL(api);
       host = url.hostname;
       wsPort = parseInt(url.port) || (url.protocol === 'https:' ? 443 : 80);
       secure = url.protocol === 'https:';
     } catch(e) { return null; }
-  } else {
+  }
+
+  const rs = localStorage.getItem('custom-rendezvous-server');
+  if (rs) {
+    const parts = rs.split(':');
+    host = parts[0];
+    if (secure === undefined) {
+      const rzPort = parseInt(parts[1]) || 21116;
+      wsPort = rzPort + 2;
+      secure = false;
+    }
+  }
+
+  if (secure === undefined) {
     return null;
   }
 
