@@ -2642,7 +2642,6 @@ let webClipboardRevision = 0;
 let webClipboardEpoch = 0;
 let webClipboardRemote = null;
 let webClipboardStarted = false;
-let webClipboardPasteKey = false;
 let webClipboardBusy = false;
 
 function webClipboardAvailable() {
@@ -2660,7 +2659,9 @@ function resetWebClipboard() {
   webClipboardBusy = false;
   delete sessionState.webClipboardAllowed;
   webClipboardStarted = false;
-  webClipboardPasteKey = false;
+  webRemoteClipboardIntent = false;
+  webClipboardShortcutKeys.clear();
+  delete sessionState.webKeyboardAllowed;
 }
 function setWebClipboardPermission(allowed) {
   sessionState.webClipboardAllowed = allowed;
@@ -2781,37 +2782,72 @@ function startWebClipboard() {
   webClipboardStarted = true;
   updateWebClipboardOption();
 }
-function pasteWebClipboardShortcut() {
+let webRemoteClipboardIntent = false;
+const webClipboardShortcutKeys = new Set();
+
+function webClipboardShortcutAllowed() {
+  return webInputAvailable() && !sessionState.isTerminal &&
+    sessionState.webKeyboardAllowed !== false &&
+    localStorage.getItem('option:toggle:view-only') !== 'true';
+}
+
+function pasteWebClipboardShortcut(usage = 25) {
   if (hasPhysicalWebPeer()) {
     const ctrlHeld = webPhysicalKeys.has(224) || webPhysicalKeys.has(228);
     if (!ctrlHeld) sendPhysicalWebKey(224, true);
-    sendPhysicalWebKey(25, true);
-    sendPhysicalWebKey(25, false);
+    sendPhysicalWebKey(usage, true);
+    sendPhysicalWebKey(usage, false);
     if (!ctrlHeld) sendPhysicalWebKey(224, false);
   } else {
     sendWebKey(undefined, 'v', false, true, [4], false);
   }
 }
+
 window.addEventListener('keydown', event => {
-  if (!webClipboardAvailable() || event.code !== 'KeyV' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
-  if (event.target?.closest?.('input,textarea,[contenteditable="true"]')) return;
-  if (!navigator.clipboard?.readText && !navigator.clipboard?.read) return;
+  if (!['KeyC', 'KeyX', 'KeyV'].includes(event.code) || !event.ctrlKey ||
+      event.altKey || event.shiftKey || event.metaKey) return;
+  if (event.target?.closest?.('input,textarea,[contenteditable="true"]')) {
+    if (event.code !== 'KeyV') webRemoteClipboardIntent = false;
+    return;
+  }
+  if (!webClipboardShortcutAllowed()) return;
+  const physical = hasPhysicalWebPeer();
+  const canRead = navigator.clipboard?.readText || navigator.clipboard?.read;
+  if (!physical && (event.code !== 'KeyV' || !webClipboardAvailable() || !canRead)) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  webClipboardPasteKey = true;
-  if (event.repeat || webClipboardBusy) return;
+  webClipboardShortcutKeys.add(event.code);
+  if (event.repeat) return;
+  if (event.code !== 'KeyV') {
+    // Remote file lists are not representable in the browser text/image clipboard.
+    webRemoteClipboardIntent = true;
+    webClipboardEpoch++;
+    webClipboardBusy = false;
+    pasteWebClipboardShortcut(event.code === 'KeyC' ? 6 : 27);
+    return;
+  }
+  if (physical && (webRemoteClipboardIntent || !webClipboardAvailable() || !canRead)) {
+    pasteWebClipboardShortcut();
+    return;
+  }
+  if (webClipboardBusy) return;
   const epoch = webClipboardEpoch;
-  // Start clipboard read during the trusted key gesture. Forward paste only after Clipboard.
   void sendWebClipboard().then(sent => {
-    if (sent && epoch === webClipboardEpoch && webClipboardAvailable()) pasteWebClipboardShortcut();
+    if (epoch !== webClipboardEpoch || !webClipboardShortcutAllowed()) return;
+    if (sent && webClipboardAvailable()) pasteWebClipboardShortcut();
   });
 }, {capture:true});
+
 window.addEventListener('keyup', event => {
-  if (event.code !== 'KeyV' || !webClipboardPasteKey) return;
+  if (!webClipboardShortcutKeys.delete(event.code)) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  webClipboardPasteKey = false;
 }, {capture:true});
+
+window.addEventListener('blur', () => {
+  webRemoteClipboardIntent = false;
+  webClipboardShortcutKeys.clear();
+});
 
 // Handle a message from the WebRTC data channel.
 // The data channel uses DTLS encryption (built into WebRTC), so we skip secretbox decryption.
@@ -3922,6 +3958,7 @@ function handleMiscMessage(miscBytes) {
     const permId = pi[1] || 0;
     const enabled = pi[2] ? true : false;
     const permName = PERM_NAMES[permId] || ('unknown_' + permId);
+    if (permId === PERM.KEYBOARD) sessionState.webKeyboardAllowed = enabled;
     if (permId === PERM.AUDIO) setWebAudioPermission(enabled);
     if (permId === PERM.CLIPBOARD) setWebClipboardPermission(enabled);
     console.log('[WebBridge] Permission:', permName, 'enabled:', enabled);
