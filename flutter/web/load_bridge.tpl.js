@@ -1849,6 +1849,7 @@ function closeSession() {
   resetWebAudio();
   resetWebClipboard();
   releaseWebModifiers();
+  delete sessionState.peerPlatform;
   sessionState.closed = true;
   // Restore the page title the session started with.
   if (_originalTitle) {
@@ -3554,7 +3555,7 @@ function handlePeerInfo(piBytes) {
   const dec = new TextDecoder();
   const username = pi[1] instanceof Uint8Array ? dec.decode(pi[1]) : '';
   const hostname = pi[2] instanceof Uint8Array ? dec.decode(pi[2]) : '';
-  const platform = pi[3] instanceof Uint8Array ? dec.decode(pi[3]) : '';
+  const platform = (pi[3] instanceof Uint8Array ? dec.decode(pi[3]) : '') || sessionState.peerPlatform || '';
   sessionState.peerPlatform = platform;
   const currentDisplay = pi[5] || 0;
   sessionState.webSelectedDisplay = currentDisplay;
