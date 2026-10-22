@@ -29,6 +29,11 @@ class AddressBook: Reactor.Component
         }
         var peers = this.getPeers();
         var me = this;
+        // the select loses its visible selection on re-render; restore it via
+        // the ref which the framework rebinds to the fresh element after render
+        self.timer(1ms, function() {
+            if (me.ab_selector) me.ab_selector.value = currentAbIdx;
+        });
         return <div .app #ab style="size:*">
             <popup>
                 <menu.context #ab-context>
@@ -42,7 +47,7 @@ class AddressBook: Reactor.Component
             </popup>
             <div .left-pane>
                 {abList.length > 1 ?
-                    <select #ab-selector style="width:*; margin-bottom: 0.5em;">
+                    <select #ab-selector @{this.ab_selector} style="width:*; margin-bottom: 0.5em;">
                         {abList.map(function(abItem, idx) {
                             return <option value={idx} selected={idx == currentAbIdx}>{abItem.name}</option>;
                         })}
@@ -72,17 +77,13 @@ class AddressBook: Reactor.Component
     }
 
     event change $(#ab-selector) (_, me) {
-        var idx = me.value + 0;
+        var idx = me.value.toInteger();
         if (idx >= 0 && idx < abList.length) {
             currentAbIdx = idx;
             ab = abList[currentAbIdx];
             this.selectedTags = [];
             handler.set_local_option("current-ab-idx", "" + currentAbIdx);
             this.update();
-            app.post(function() {
-                var sel = app.$(select#ab-selector);
-                if (sel) sel.value = currentAbIdx;
-            });
         }
     }
     
@@ -823,10 +824,6 @@ function _nmStep(step) {
         ab = abList.length > 0 ? abList[currentAbIdx] : { tags: [], peers: [] };
         abLoading = false;
         app.update();
-        app.post(function() {
-            var sel = app.$(select#ab-selector);
-            if (sel) sel.value = currentAbIdx;
-        });
     }
 }
 
