@@ -1253,9 +1253,12 @@ fn get_api_server_(_api: String, custom: String) -> String {
             return lic.api.clone();
         }
     }
-    let api = Config::get_api_server();
-    if !api.is_empty() {
-        return api.to_owned();
+    #[cfg(not(test))]
+    {
+        let api = Config::get_api_server();
+        if !api.is_empty() {
+            return api.to_owned();
+        }
     }
     let s0 = get_custom_rendezvous_server(custom);
     if !s0.is_empty() {
