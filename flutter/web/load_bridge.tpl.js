@@ -965,29 +965,69 @@ function fireOnlineCallback(onlines, offlines) {
 
 // --- Online status query via WebSocket ---
 
+// Safari on iOS 26.1 with iCloud Private Relay can only hold one WebSocket per host:port: the
+// first connects and every later one stays in CONNECTING forever (WebKit bug 302561). The peers
+// view rebuilds while its UpdateEvent is still `load`, so one page load used to fire several
+// queries at once; the stuck ones timed out and overwrote the good result with "all offline".
+// Keep one query in flight and coalesce the requests that arrive meanwhile.
+let onlineQueryInFlight = false;
+let onlineQueryPending = null;
+let onlineQueryTimer = null;
+
 function queryOnlines(value) {
   let ids = [];
   try { ids = JSON.parse(value || '[]'); } catch(e) { return; }
   if (!ids.length) return;
+  // The peers view and the address-book autocomplete query different id sets; merge instead of
+  // replacing so a request that arrives mid-flight is not dropped.
+  onlineQueryPending = onlineQueryPending
+    ? Array.from(new Set([...onlineQueryPending, ...ids]))
+    : ids;
+  if (onlineQueryInFlight || onlineQueryTimer) return;
+  runOnlineQuery();
+}
+
+function runOnlineQuery() {
+  const ids = onlineQueryPending;
+  onlineQueryPending = null;
+  if (!ids || !ids.length) return;
 
   const wsUrl = getRendezvousWsUrl();
-  if (!wsUrl) { fireOnlineCallback([], ids); return; }
+  if (!wsUrl) return;
 
   const myId = localStorage.getItem('id') || '';
   const msg = buildOnlineRequest(myId, ids);
 
-  const ws = new WebSocket(wsUrl);
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch(e) { return; }
   ws.binaryType = 'arraybuffer';
+  onlineQueryInFlight = true;
 
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timeout);
+    onlineQueryInFlight = false;
+    if (onlineQueryPending) {
+      // Wait a moment so Safari can release the socket before the next query takes the slot.
+      onlineQueryTimer = setTimeout(() => { onlineQueryTimer = null; runOnlineQuery(); }, 1000);
+    }
+  };
+
+  // A failed query is not the same as every peer being offline: leave the states untouched and
+  // let the poll retry instead of painting the whole list offline.
   const timeout = setTimeout(() => {
+    // A stuck handshake still owns the only slot Safari grants; drop the coalesced request and
+    // let the periodic poll try again once it has been released.
+    onlineQueryPending = null;
     ws.close();
-    fireOnlineCallback([], ids);
-  }, 5000);
+    finish();
+  }, 10000);
 
   ws.onopen = () => ws.send(msg);
 
   ws.onmessage = (e) => {
-    clearTimeout(timeout);
     ws.close();
     const data = new Uint8Array(e.data);
     try {
@@ -1001,19 +1041,17 @@ function queryOnlines(value) {
           (states[(i / 8) | 0] & bit) ? onlines.push(ids[i]) : offlines.push(ids[i]);
         }
         fireOnlineCallback(onlines, offlines);
-        return;
       }
-      fireOnlineCallback([], ids);
     } catch(err) {
       console.error('[WebBridge] parse online response error:', err);
-      fireOnlineCallback([], ids);
     }
+    finish();
   };
 
-  ws.onerror = () => {
-    clearTimeout(timeout);
-    fireOnlineCallback([], ids);
-  };
+  ws.onerror = () => finish();
+  // Release the single slot as soon as the socket is gone, even when the server closes it without
+  // an error event.
+  ws.onclose = () => finish();
 }
 
 // --- Session: Rendezvous + Relay connection ---
