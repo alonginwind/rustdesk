@@ -3578,6 +3578,22 @@ function handleLoginResponse(lrBytes) {
   const hasPeerInfo = lr[2] instanceof Uint8Array && lr[2].length > 0;
   console.log('[WebBridge] handleLoginResponse: error=', error || '(none)', 'hasPeerInfo=', hasPeerInfo, 'lrFields:', Object.keys(lr));
   if (error) {
+    if (error === 'Wrong Password') {
+      // src/client.rs::handle_login_error keeps the login connection alive on a wrong password
+      // and asks for the password again: the peer waits for another LoginRequest on the same
+      // connection until LOGIN_GRACE expires. Closing the session here left the user with a
+      // Connection Error and no way to enter the new password after the peer changed it.
+      sessionState.loginPassword = '';
+      sessionState.password = '';
+      pendingRemember = false;
+      fireSessionEvent('msgbox', JSON.stringify({
+        type: 're-input-password',
+        title: error,
+        text: 'Do you want to enter again?',
+        link: '',
+      }));
+      return;
+    }
     sessionFail(error);
   } else if (hasPeerInfo) {
     console.log('[WebBridge] Login successful');
