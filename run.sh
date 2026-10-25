@@ -7,6 +7,25 @@ if [ "$1" == "android" ]; then
 elif [ "$1" == "linux" ]; then
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
     python3 ./build.py --flutter --skip-cargo
+elif [ "$1" == "windows" ]; then
+    if [ ! -f "target/libsodium/build/lib/libsodium.a" ]; then
+        ./patch-deps.sh --clean
+        mkdir -p target
+        ./sodium.sh
+    fi
+    # sas.dll/newdev.dll import libs are missing from mingw-w64
+    extra=target/mingw-extra
+    mkdir -p "$extra/lib"
+    if [ ! -f "target/mingw-extra/lib/libsas.a" ]; then
+        printf 'LIBRARY sas.dll\nEXPORTS\nSendSAS\n' > "$extra/sas.def"
+        x86_64-w64-mingw32-dlltool -d "$extra/sas.def" -l "$extra/lib/libsas.a" -k
+    fi
+    if [ ! -f "target/mingw-extra/lib/libNewdev.a" ]; then
+        printf 'LIBRARY newdev.dll\nEXPORTS\nUpdateDriverForPlugAndPlayDevicesA\nUpdateDriverForPlugAndPlayDevicesW\nInstallUpdate\n' > "$extra/newdev.def"
+        x86_64-w64-mingw32-dlltool -d "$extra/newdev.def" -l "$extra/lib/libNewdev.a" -k
+    fi
+    export SODIUM_LIB_DIR=$(pwd)/target/libsodium/build/lib
+    cargo rustc --locked --features flutter --lib --release --target=x86_64-pc-windows-gnu -- -L native=$(pwd)/$extra/lib
 elif [ "$1" == "aarch64" ]; then
     export PKG_CONFIG_SYSROOT_DIR=$HOME/Documents/sysroot
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release --target=aarch64-unknown-linux-gnu
