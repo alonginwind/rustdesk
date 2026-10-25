@@ -2317,6 +2317,7 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 			break;
 
 		case DELAYED_RENDERING:
+			;
 			FORMAT_IDS *format_ids = (FORMAT_IDS *)lParam;
 			if (!try_open_clipboard(clipboard->hwnd))
 			{
