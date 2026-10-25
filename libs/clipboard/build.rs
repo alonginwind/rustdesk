@@ -1,4 +1,3 @@
-#[cfg(target_os = "windows")]
 fn build_c_impl() {
     let mut build = cc::Build::new();
 
@@ -18,6 +17,7 @@ fn build_c_impl() {
             // build.flag("-std:c++11");
         } else {
             build.flag("-fPIC");
+            build.define("_WIN32_WINNT", "0x0601");
             // build.flag("-std=c++11");
             // build.flag("-include");
             // build.flag(&confdefs_path.to_string_lossy());
@@ -26,10 +26,13 @@ fn build_c_impl() {
         build.compile("mycliprdr");
     }
 
+    println!("cargo:rustc-link-lib=uuid");
     println!("cargo:rerun-if-changed=src/windows/wf_cliprdr.c");
 }
 
 fn main() {
-    #[cfg(target_os = "windows")]
-    build_c_impl();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    if target_os == "windows" {
+        build_c_impl();
+    }
 }
