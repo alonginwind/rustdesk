@@ -1,14 +1,20 @@
-#[cfg(windows)]
 fn build_windows() {
     let file = "src/platform/windows.cc";
     let file2 = "src/platform/windows_delete_test_cert.cc";
     let mut build = cc::Build::new();
+    if !build.get_compiler().is_like_msvc() {
+        build
+            .define("_WIN32_WINNT", "0x0601")
+            .define("NTDDI_VERSION", "0x06010000")
+            .define("_WIN32_IE", "0x0700");
+    }
+    build.flag_if_supported("-Wno-narrowing");
     if !cfg!(feature = "flutter") {
         build.cpp(true).std("c++17").define("RUSTDESK_SCITER", None);
         println!("cargo:rerun-if-changed=flutter/windows/runner/service_control.h");
     }
     build.file(file).file(file2).compile("windows");
-    println!("cargo:rustc-link-lib=WtsApi32");
+    println!("cargo:rustc-link-lib=wtsapi32");
     println!("cargo:rerun-if-changed={}", file);
     println!("cargo:rerun-if-changed={}", file2);
 }
@@ -95,9 +101,10 @@ fn main() {
     install_android_deps();
     #[cfg(all(windows, feature = "inline"))]
     build_manifest();
-    #[cfg(windows)]
-    build_windows();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    if target_os == "windows" {
+        build_windows();
+    }
     if target_os == "macos" {
         #[cfg(target_os = "macos")]
         build_mac();
