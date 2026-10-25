@@ -1,8 +1,10 @@
 // https://github.com/rustdesk/rustdesk/discussions/6444#discussioncomment-9010062
 
 #include <iostream>
-#include <Windows.h>
+#include <windows.h>
 #include <strsafe.h>
+// mingw's strsafe.h maps wsprintfW to an undeclared sentinel symbol.
+#undef wsprintfW
 
 BOOL IsCertWdkTestCert(char* lpBlobData, DWORD cchBlobData) {
 	DWORD cchIdxBlobData = 0;

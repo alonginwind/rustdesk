@@ -254,9 +254,10 @@ fn main() {
         // nothing
     } else if target_os == "android" {
         println!("cargo:rustc-cfg=android");
-    } else if cfg!(windows) {
+    } else if target_os == "windows" {
         // The first choice is Windows because DXGI is amazing.
         println!("cargo:rustc-cfg=dxgi");
+        println!("cargo:rustc-link-lib=windowscodecs");
     } else if cfg!(target_os = "macos") {
         // Quartz is second because macOS is the (annoying) exception.
         println!("cargo:rustc-cfg=quartz");
