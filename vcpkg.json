@@ -82,6 +82,15 @@
       "name": "ffmpeg",
       "host": false,
       "platform": "((android | ios | (linux & arm32)) & static)"
+    },
+    {
+      "name": "ffmpeg",
+      "host": false,
+      "features": [
+        "amf",
+        "nvcodec"
+      ],
+      "platform": "(linux & !arm32 & static)"
     }
   ],
   "vcpkg-configuration": {
