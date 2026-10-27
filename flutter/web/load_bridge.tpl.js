@@ -4032,6 +4032,263 @@ function handleMiscMessage(miscBytes) {
   }
 }
 
+// --- OIDC account auth ---
+// Native runs this flow in Rust (src/hbbs_http/account.rs): POST /api/oidc/auth for a provider
+// url, then poll /api/oidc/auth-query until the browser half finishes. Web has no Rust side, so
+// the same two calls are made here and handed to Dart in the shape mainAccountAuthResult()
+// returns on native.
+const ACCOUNT_AUTH_REQUESTING = 'Requesting account auth';
+const ACCOUNT_AUTH_WAITING = 'Waiting account auth';
+const ACCOUNT_AUTH_LOGIN = 'Login account auth';
+const ACCOUNT_AUTH_QUERY_INTERVAL_MS = 1000;
+const ACCOUNT_AUTH_QUERY_TIMEOUT_MS = 3 * 60 * 1000;
+// Native's reqwest call uses a 12s timeout that also covers reading the body.
+const ACCOUNT_AUTH_REQUEST_TIMEOUT_MS = 12000;
+// Returned while the provider has not redirected back yet; native keeps polling on it too.
+const ACCOUNT_AUTH_PENDING_ERROR = 'No authed oidc is found';
+
+let accountAuthState = null;
+
+function accountAuthBase() {
+  return getApiServer().replace(/\/+$/, '');
+}
+
+function accountAuthRequest(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ACCOUNT_AUTH_REQUEST_TIMEOUT_MS);
+  // The deadline has to include the body read: fetch resolves on headers, so a stalled body would
+  // otherwise leave the caller waiting with no timeout left.
+  return fetch(url, Object.assign({ signal: controller.signal }, options))
+    .then(resp => resp.text())
+    .finally(() => clearTimeout(timer));
+}
+
+// Native unwraps the auth-query payload through HttpResponseBody { body: String } before parsing
+// it; other servers answer with the payload itself. Accept both.
+function accountAuthPayload(text) {
+  const outer = JSON.parse(text);
+  if (outer && typeof outer.body === 'string') return JSON.parse(outer.body);
+  return outer;
+}
+
+// The provider url is opened in a same-origin about:blank window, so a javascript: url returned by
+// the server would run with this page's privileges. Native's Url type accepts any scheme.
+function accountAuthUrlOk(value) {
+  if (typeof value !== 'string' || !value) return false;
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch (e) {
+    return false;
+  }
+}
+
+function accountAuthOptionalString(value) {
+  return value === undefined || value === null || typeof value === 'string';
+}
+
+// Native deserializes auth-query into AuthBody, where access_token, type and user.name are
+// required; a response missing any of them is DataTypeFormat there and polling continues. The
+// optional fields are type-checked because the remember branch stores them.
+function accountAuthBodyReady(data) {
+  return !!data
+    && typeof data.access_token === 'string'
+    && typeof data.type === 'string'
+    && !!data.user
+    && typeof data.user.name === 'string'
+    && !!data.user.info && typeof data.user.info === 'object'
+    && accountAuthOptionalString(data.user.display_name)
+    && accountAuthOptionalString(data.user.avatar)
+    && (data.user.status === undefined || typeof data.user.status === 'number');
+}
+
+function accountAuthBrowserName() {
+  const ua = navigator.userAgent || '';
+  const m = ua.match(/(Edg|OPR|Chrome|CriOS|Firefox|FxiOS|Version)\/([\d.]+)/);
+  if (!m) return ua.slice(0, 80);
+  const name = { Edg: 'Edge', OPR: 'Opera', Version: 'Safari' }[m[1]] || m[1];
+  return `${name} ${m[2]}`;
+}
+
+function accountAuthOpenUrl(state, url) {
+  try {
+    if (!state.popup || state.popup.closed) return false;
+    state.popup.location.replace(url);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function accountAuthClosePopup(state) {
+  try {
+    if (state.popup && !state.popup.closed) state.popup.close();
+  } catch (e) {}
+  state.popup = null;
+}
+
+function accountAuthStopPolling(state) {
+  if (state.timer !== null) {
+    clearInterval(state.timer);
+    state.timer = null;
+  }
+}
+
+function accountAuthFinish(state, failedMsg, closePopup) {
+  if (state !== accountAuthState) return;
+  state.failedMsg = failedMsg;
+  accountAuthStopPolling(state);
+  if (closePopup) accountAuthClosePopup(state);
+}
+
+function accountAuthQuery(state) {
+  state.querying = true;
+  const params = new URLSearchParams({ code: state.code, id: state.id, uuid: state.uuid });
+  accountAuthRequest(`${accountAuthBase()}/api/oidc/auth-query?${params.toString()}`, { method: 'GET' })
+    .then(text => {
+      if (state !== accountAuthState) return;
+      const data = accountAuthPayload(text);
+      // Native splits Error (a string error, fatal unless pending) from ErrorFormat (a non-string
+      // error, ignored like any unparsable body); mirror both.
+      if (data && Object.prototype.hasOwnProperty.call(data, 'error')) {
+        if (typeof data.error === 'string'
+            && !data.error.includes(ACCOUNT_AUTH_PENDING_ERROR)) {
+          accountAuthFinish(state, data.error, false);
+        }
+        return;
+      }
+      if (!accountAuthBodyReady(data)) return;
+      if (data.type === 'access_token' && state.remember) {
+        // Same slots mainGetLocalOption() reads, and the PunchHoleRequest token field.
+        localStorage.setItem('option:local:access_token', data.access_token);
+        localStorage.setItem('option:local:user_info', JSON.stringify({
+          name: data.user.name,
+          display_name: data.user.display_name === undefined ? null : data.user.display_name,
+          avatar: data.user.avatar === undefined ? null : data.user.avatar,
+          status: data.user.status === undefined ? 1 : data.user.status,
+        }));
+      }
+      state.authBody = data;
+      state.stateMsg = ACCOUNT_AUTH_LOGIN;
+      state.failedMsg = '';
+      accountAuthStopPolling(state);
+      accountAuthClosePopup(state);
+    })
+    .catch(e => dbg('[WebBridge] oidc auth-query failed:', e))
+    .finally(() => { state.querying = false; });
+}
+
+function accountAuthTick(state) {
+  if (state !== accountAuthState) return;
+  // Native tests the deadline between queries, never while one is in flight, so a response that
+  // arrives late still wins over the timeout instead of being discarded after it.
+  if (state.querying) return;
+  if (Date.now() - state.startedAt >= ACCOUNT_AUTH_QUERY_TIMEOUT_MS) {
+    accountAuthFinish(state, 'timeout', false);
+    return;
+  }
+  accountAuthQuery(state);
+}
+
+function accountAuthStartPolling(state) {
+  accountAuthStopPolling(state);
+  state.startedAt = Date.now();
+  // Native queries once before its first sleep.
+  accountAuthQuery(state);
+  state.timer = setInterval(() => accountAuthTick(state), ACCOUNT_AUTH_QUERY_INTERVAL_MS);
+}
+
+function accountAuthRequestUrl(state) {
+  const api = accountAuthBase();
+  accountAuthRequest(`${api}/api/oidc/auth`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      op: state.op,
+      id: state.id,
+      uuid: state.uuid,
+      deviceInfo: { os: detectOs(), type: 'browser', name: accountAuthBrowserName() },
+      apiDomain: api,
+    }),
+  })
+    .then(text => {
+      if (state !== accountAuthState) return;
+      const data = accountAuthPayload(text);
+      // Native reports a non-string error as ErrorFormat, and both that and DataTypeFormat end as
+      // "Invalid auth response" because the data cannot be deserialized.
+      if (data && Object.prototype.hasOwnProperty.call(data, 'error')) {
+        accountAuthFinish(
+          state,
+          typeof data.error === 'string' ? data.error : 'Invalid auth response',
+          true
+        );
+        return;
+      }
+      if (!data || typeof data.code !== 'string' || !accountAuthUrlOk(data.url)) {
+        accountAuthFinish(state, 'Invalid auth response', true);
+        return;
+      }
+      state.code = data.code;
+      state.url = data.url;
+      state.stateMsg = ACCOUNT_AUTH_WAITING;
+      state.urlLaunched = accountAuthOpenUrl(state, data.url);
+      accountAuthStartPolling(state);
+    })
+    .catch(e => {
+      if (state !== accountAuthState) return;
+      accountAuthFinish(state, e && e.message ? e.message : String(e), true);
+    });
+}
+
+function accountAuthStart(op, remember) {
+  accountAuthCancel();
+  // Safari only allows the popup while the click's user gesture is still active, so open it
+  // before the first request resolves and point it at the provider url afterwards.
+  let popup = null;
+  try { popup = window.open('about:blank', '_blank'); } catch (e) { popup = null; }
+  // Keep the handle for location.replace/close, but drop the reverse reference so the provider
+  // page cannot navigate this window.
+  if (popup) { try { popup.opener = null; } catch (e) {} }
+  const state = {
+    op: op,
+    remember: remember === true,
+    id: localStorage.getItem('id') || '',
+    uuid: localStorage.getItem('uuid') || '',
+    code: '',
+    url: '',
+    urlLaunched: false,
+    stateMsg: ACCOUNT_AUTH_REQUESTING,
+    failedMsg: '',
+    authBody: null,
+    popup: popup,
+    timer: null,
+    querying: false,
+    startedAt: 0,
+  };
+  accountAuthState = state;
+  accountAuthRequestUrl(state);
+}
+
+function accountAuthCancel() {
+  const state = accountAuthState;
+  accountAuthState = null;
+  if (!state) return;
+  accountAuthStopPolling(state);
+  accountAuthClosePopup(state);
+}
+
+function accountAuthResult() {
+  const state = accountAuthState;
+  if (!state) return '';
+  return JSON.stringify({
+    state_msg: state.stateMsg,
+    failed_msg: state.failedMsg,
+    url: state.url || null,
+    url_launched: state.urlLaunched,
+    auth_body: state.authBody,
+  });
+}
+
 // --- Public API ---
 
 // Called by mainInit() via mainReloadKeyboardShortcuts(). The JS-side shortcut matcher
@@ -4064,6 +4321,7 @@ window.getByName = function(name, arg) {
       case 'my_name': return getWebDisplayName();
       case 'uuid': return localStorage.getItem('uuid') || '';
       case 'api_server': return getApiServer();
+      case 'account_auth_result': return accountAuthResult();
       case 'is_using_public_server':
         return localStorage.getItem('api-server') ? 'false' : 'true';
       case 'alternative_codecs': return JSON.stringify(_alternativeCodecs);
@@ -4196,6 +4454,18 @@ window.setByName = function(name, value) {
         return '';
       case 'query_onlines':
         queryOnlines(value);
+        return '';
+      case 'account_auth': {
+        try {
+          const obj = JSON.parse(value);
+          accountAuthStart(obj.op || '', obj.remember === true);
+        } catch(e) {
+          console.warn('[WebBridge] Failed to start account auth:', e);
+        }
+        return '';
+      }
+      case 'account_auth_cancel':
+        accountAuthCancel();
         return '';
       case 'option:peer': {
         // Set peer option. alias/password are stored in the recent_peers entry; any other peer
