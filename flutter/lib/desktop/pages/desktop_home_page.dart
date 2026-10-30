@@ -55,6 +55,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
+  bool _holdIncomingOnlyWindowSize = false;
 
   @override
   Widget build(BuildContext context) {
@@ -94,16 +95,19 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (!isOutgoingOnly) buildIDBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
       FutureBuilder<Widget>(
-        future: Future.value(
-            Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
+        future: Future.value(Obx(() {
+          final cards = buildHelpCards(stateGlobal.updateUrl.value);
+          // The cards change height when an update banner shows up or goes
+          // away, so the home pane has to be re-measured here.
+          if (isIncomingOnly) {
+            _scheduleUpdateWindowSize();
+          }
+          return cards;
+        })),
         builder: (_, data) {
           if (data.hasData) {
             if (isIncomingOnly) {
-              if (isInHomePage()) {
-                Future.delayed(Duration(milliseconds: 300), () {
-                  _updateWindowSize();
-                });
-              }
+              _scheduleUpdateWindowSize();
             }
             return data.data!;
           } else {
@@ -116,13 +120,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       children.addAll([
         Divider(),
         OnlineStatusWidget(
-          onSvcStatusChanged: () {
-            if (isInHomePage()) {
-              Future.delayed(Duration(milliseconds: 300), () {
-                _updateWindowSize();
-              });
-            }
-          },
+          onSvcStatusChanged: () => _scheduleUpdateWindowSize(),
         ).marginOnly(bottom: 6, right: 6)
       ]);
     }
@@ -447,7 +445,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   /// Show bind device dialog
-  void _showBindDeviceDialog(BuildContext context) {
+  Future<void> _showBindDeviceDialog(BuildContext context) async {
+    final isIncomingOnly = bind.isIncomingOnly();
+    // The incoming-only window is sized to the narrow home pane, which makes
+    // the form unusable. Widen it temporarily and restore it when closed.
+    if (isIncomingOnly) {
+      _holdIncomingOnlyWindowSize = true;
+      await windowManager.setSize(getIncomingOnlySettingsSize());
+    }
     final abAliasController = TextEditingController(
       text: bind.mainGetOptionSync(key: 'preset-address-book-alias'),
     );
@@ -461,7 +466,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     String? abError;
     String? aliasError;
 
-    showDialog(
+    await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => AlertDialog(
@@ -579,6 +584,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         ),
       ),
     );
+    abAliasController.dispose();
+    deviceUsernameController.dispose();
+    deviceNameController.dispose();
+    if (isIncomingOnly) {
+      _holdIncomingOnlyWindowSize = false;
+      // Content may have changed while the dialog was open, re-measure before
+      // restoring the home window size.
+      _updateWindowSize();
+      await windowManager.setSize(getIncomingOnlyHomeSize());
+    }
   }
 
   /// Fetch address book names from API
@@ -1029,7 +1044,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     WidgetsBinding.instance.addObserver(this);
   }
 
+  /// Re-measure the incoming-only window shortly after a layout change, but
+  /// only while the home page is still the active one.
+  void _scheduleUpdateWindowSize() {
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted || !isInHomePage()) {
+        return;
+      }
+      _updateWindowSize();
+    });
+  }
+
   _updateWindowSize() {
+    if (_holdIncomingOnlyWindowSize) {
+      return;
+    }
     RenderObject? renderObject = _childKey.currentContext?.findRenderObject();
     if (renderObject == null) {
       return;
