@@ -98,6 +98,7 @@ class UserModel {
 
       final user = UserPayload.fromJson(data);
       _parseAndUpdateUser(user);
+      await applyClientStrategy(data);
     } catch (e) {
       debugPrint('Failed to refreshCurrentUser: $e');
       // Surface failures in the address book / group tabs, which offer a
@@ -189,6 +190,30 @@ class UserModel {
     }
   }
 
+  // The controller-side strategy arrives with login and `/api/currentUser`
+  // responses. Its `client_strategy_timestamp` is kept apart from the
+  // peer-side strategy (`strategy_timestamp`, applied from the heartbeat) so
+  // the two channels never invalidate each other; Rust skips a value it has
+  // already applied and stores it only after a successful apply.
+  static Future<void> applyClientStrategy(dynamic body) async {
+    if (body is! Map) return;
+    final strategy = body['client_strategy'];
+    final modifiedAt = body['client_modified_at'];
+    if (strategy is! Map || modifiedAt is! num) return;
+    final configOptions = strategy['config_options'];
+    if (configOptions is! Map) return;
+    // Best effort: a failed apply must not fail a login that already succeeded.
+    try {
+      await bind.mainApplyClientStrategy(
+          json: jsonEncode(configOptions),
+          modifiedAt: modifiedAt.toInt().toString());
+      // Rust owns the timestamp and the retry, so this only records the request.
+      debugPrint('Requested client strategy, modified_at: $modifiedAt');
+    } catch (e) {
+      debugPrint('Failed to apply client strategy: $e');
+    }
+  }
+
   /// throw [RequestException]
   Future<LoginResponse> login(LoginRequest loginRequest) async {
     final url = await bind.mainGetApiServer();
@@ -216,7 +241,8 @@ class UserModel {
     return getLoginResponseFromAuthBody(body);
   }
 
-  LoginResponse getLoginResponseFromAuthBody(Map<String, dynamic> body) {
+  Future<LoginResponse> getLoginResponseFromAuthBody(
+      Map<String, dynamic> body) async {
     final LoginResponse loginResponse;
     try {
       loginResponse = LoginResponse.fromJson(body);
@@ -229,6 +255,9 @@ class UserModel {
         loginResponse.access_token != null;
     if (isLogInDone && loginResponse.user != null) {
       _parseAndUpdateUser(loginResponse.user!);
+    }
+    if (isLogInDone) {
+      await applyClientStrategy(body);
     }
 
     return loginResponse;
