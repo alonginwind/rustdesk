@@ -1618,6 +1618,26 @@ function set_local_user_info(user) {
     handler.set_local_option("user_info", JSON.stringify(user_info));
 }
 
+// Controller strategy arrives with login and /api/currentUser responses and is
+// applied by the same Rust function as the peer-side strategy. Its timestamp
+// stays apart from the peer-side `strategy_timestamp` (heartbeat); Rust skips
+// an already applied value and stores it only after a successful apply.
+function apply_client_strategy(data) {
+    var strategy = data.client_strategy;
+    var modified_at = data.client_modified_at;
+    if (!strategy || modified_at == undefined) return;
+    // TIScript Integer is 32-bit, so keep the millisecond value as a float.
+    // A value that cannot be formatted must not abort the login continuation
+    // that runs after this call.
+    var timestamp;
+    try {
+        timestamp = String.printf("%.0f", modified_at.toFloat());
+    } catch (e) {
+        return;
+    }
+    handler.apply_client_strategy(JSON.stringify(strategy.config_options || {}), timestamp);
+}
+
 function login() {
     var name0 = getUserName();
     var pass0 = '';
@@ -1654,6 +1674,7 @@ function login() {
             }
             handler.set_local_option("access_token", data.access_token);
             set_local_user_info(data.user);
+            apply_client_strategy(data);
             show_progress(-1);
             myIdMenu.update();
             getAb();
@@ -1706,6 +1727,7 @@ function on_2fa_check(last_msg) {
                     }
                     handler.set_local_option("access_token", data.access_token);
                     set_local_user_info(data.user);
+                    apply_client_strategy(data);
                     show_progress(-1);
                     myIdMenu.update();
                     getAb();
@@ -1763,6 +1785,7 @@ function refreshCurrentUser() {
           return;
         }
         set_local_user_info(data);
+        apply_client_strategy(data);
         myIdMenu.update();
         getAb();
     }, function(err, status) {

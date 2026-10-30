@@ -268,6 +268,10 @@ impl UI {
         set_local_option(key, value);
     }
 
+    fn apply_client_strategy(&self, json: String, modified_at: String) {
+        crate::hbbs_http::sync::apply_client_strategy(&json, &modified_at);
+    }
+
     fn peer_has_password(&self, id: String) -> bool {
         peer_has_password(id)
     }
@@ -783,6 +787,7 @@ impl sciter::EventHandler for UI {
         fn get_option(String);
         fn get_local_option(String);
         fn set_local_option(String, String);
+        fn apply_client_strategy(String, String);
         fn get_peer_option(String, String);
         fn peer_has_password(String);
         fn forget_password(String);

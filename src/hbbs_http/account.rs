@@ -97,6 +97,12 @@ pub struct UserPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientStrategyPayload {
+    #[serde(default)]
+    pub config_options: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthBody {
     pub access_token: String,
     pub r#type: String,
@@ -105,6 +111,12 @@ pub struct AuthBody {
     #[serde(default)]
     pub secret: String,
     pub user: UserPayload,
+    // Controller-side strategy, only sent by servers that support it. Kept as
+    // a pass-through here; the Flutter side decides whether it is new.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_strategy: Option<ClientStrategyPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_modified_at: Option<i64>,
 }
 
 pub struct OidcSession {

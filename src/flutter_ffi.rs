@@ -1094,6 +1094,10 @@ pub fn main_get_options_sync() -> SyncReturn<String> {
     SyncReturn(get_options())
 }
 
+pub fn main_apply_client_strategy(json: String, modified_at: String) {
+    crate::hbbs_http::sync::apply_client_strategy(&json, &modified_at);
+}
+
 pub fn main_set_options(json: String) -> hbb_common::anyhow::Result<()> {
     let mut map: HashMap<String, String> = serde_json::from_str(&json).unwrap_or(HashMap::new());
     #[cfg(target_os = "android")]

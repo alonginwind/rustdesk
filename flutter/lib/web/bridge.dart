@@ -847,6 +847,11 @@ class RustdeskImpl {
     return Future(() => js.context.callMethod('setByName', ['options', json]));
   }
 
+  Future<void> mainApplyClientStrategy(
+      {required String json, required String modifiedAt, dynamic hint}) async {
+    // The web client does not use the controller-side strategy.
+  }
+
   Future<String> mainTestIfValidServer(
       {required String server, required bool testWithProxy, dynamic hint}) {
     // TODO: implement
