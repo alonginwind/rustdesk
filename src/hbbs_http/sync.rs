@@ -364,6 +364,7 @@ const BLOCKED_CONFIG_OPTIONS: &[&str] = &[
     keys::OPTION_ALLOW_WEBSOCKET,
     keys::OPTION_WEBSOCKET_PORT,
     // Authentication and credentials.
+    "reset-pwd",
     "2fa",
     "bot",
     keys::OPTION_PRESET_ADDRESS_BOOK_PASSWORD,
@@ -402,7 +403,6 @@ fn filter_config_options(options: &mut HashMap<String, String>) {
 async fn handle_config_options(
     mut config_options: HashMap<String, String>,
 ) -> hbb_common::ResultType<()> {
-    filter_config_options(&mut config_options);
     // Check for reset-pwd strategy: clear local password to fall back to preset password.
     // Remove it so it won't be persisted to config file (one-time command).
     if config_options.remove("reset-pwd").map_or(false, |v| v == "Y") {
@@ -411,6 +411,7 @@ async fn handle_config_options(
             log::error!("Failed to reset local password: {}", e);
         }
     }
+    filter_config_options(&mut config_options);
 
     let mut options = Config::get_options();
     let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
@@ -450,6 +451,57 @@ async fn handle_config_options(
     }
     Config::set_options(options);
     Ok(())
+}
+
+/// Authentication options only apply to the host that serves connections, so
+/// the controller-side strategy must not persist them: a local value would
+/// overwrite the host's own setting.
+fn handle_config_options_client(mut config_options: HashMap<String, String>) {
+    filter_config_options(&mut config_options);
+    // Log the keys only: the values can carry a password or the relay key.
+    let keys: Vec<&str> = config_options.keys().map(String::as_str).collect();
+    log::info!("client strategy options: {}", keys.join(","));
+
+    let mut options = Config::get_options();
+    let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
+    config_options
+        .iter()
+        .map(|(k, v)| {
+            // Priority: user config > default advanced options.
+            // Only when default advanced options are also empty, remove user option (fallback to built-in default);
+            // otherwise insert an empty value so user config remains present.
+            if v.is_empty() && default_settings.get(k).map_or("", |v| v).is_empty() {
+                options.remove(k);
+            } else {
+                options.insert(k.to_string(), v.to_string());
+            }
+        })
+        .count();
+    Config::set_options(options);
+}
+
+/// Apply the controller-side strategy options (`client_strategy.config_options`
+/// from login and `/api/currentUser`).
+///
+/// The authentication revocation path and `reset-pwd` only apply to the host
+/// that serves connections, so this path only merges the options.
+///
+/// `client_strategy_timestamp` is stored once the options are merged, so an
+/// invalid payload is retried on the next login / `/api/currentUser`.
+pub(crate) fn apply_client_strategy(json: &str, modified_at: &str) {
+    if LocalConfig::get_option("client_strategy_timestamp") == modified_at {
+        return;
+    }
+
+    let options: HashMap<String, String> = match serde_json::from_str(json) {
+        Ok(options) => options,
+        Err(err) => {
+            log::warn!("Invalid client strategy options: {err}");
+            return;
+        }
+    };
+    handle_config_options_client(options);
+    LocalConfig::set_option("client_strategy_timestamp".to_owned(), modified_at.to_owned());
 }
 
 #[allow(unused)]
