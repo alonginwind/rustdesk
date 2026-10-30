@@ -4,7 +4,7 @@ stdout.println("is_xfce: ", is_xfce);
 
 // See default height in common.tis `msgbox()`.
 const msgbox_default_height = 180;
-const incoming_only_width = 180;
+const incoming_only_width = 280;
 
 const outgoing_only = handler.is_outgoing_only();
 const incoming_only = handler.is_incoming_only();
@@ -67,6 +67,122 @@ function get_msgbox_width(width=500) {
     return width;
 }
 
+var bind_device_window_saved = false;
+var bind_device_window_x = 0;
+var bind_device_window_y = 0;
+var bind_device_window_w = 0;
+var bind_device_window_h = 0;
+var bind_device_left_pane_h = 0;
+
+// The incoming-only window is sized to the narrow left pane, which cannot fit
+// the bind device form. Widen it while the dialog is open and restore it after.
+function enlargeWindowForBindDevice() {
+    if (!incoming_only || bind_device_window_saved) return;
+    var (x, y, w, h) = view.box(#rectw, #border, #screen);
+    bind_device_window_x = x;
+    bind_device_window_y = y;
+    bind_device_window_w = w;
+    bind_device_window_h = h;
+    bind_device_window_saved = true;
+    // Keep the left pane at its incoming width instead of stretching it.
+    var left_pane = $(div.left-pane);
+    if (left_pane) {
+        // Pin the pane to its original height, otherwise the taller window pushes
+        // the connect status banner down to the bottom of the pane.
+        bind_device_left_pane_h = left_pane.box(#height, #border);
+        left_pane.style.set {
+            width: incoming_only_width + "px",
+            height: bind_device_left_pane_h + "px",
+        };
+    }
+    var (sx, sy, sw, sh) = view.screenBox(#workarea, #rectw);
+    var nw = scaleIt(768);
+    var nh = scaleIt(480);
+    if (nw > sw) nw = sw;
+    if (nh > sh) nh = sh;
+    // Keep the original top-left corner, same as Flutter's windowManager.setSize().
+    view.move(x, y, nw, nh);
+}
+
+function restoreWindowForBindDevice() {
+    if (!bind_device_window_saved) return;
+    bind_device_window_saved = false;
+    var left_pane = $(div.left-pane);
+    if (left_pane) {
+        left_pane.style.set {
+            width: "*",
+            height: incoming_only ? "auto" : "*",
+        };
+    }
+    view.move(bind_device_window_x, bind_device_window_y,
+        bind_device_window_w, bind_device_window_h);
+}
+
+// In incoming-only mode the window is sized from the left pane content, the same
+// way Flutter sizes the home window from its measured content.
+var fit_fail_logged = false;
+function fitIncomingWindowSize() {
+    if (!incoming_only || bind_device_window_saved) return;
+    var left_pane = $(div.left-pane);
+    if (!left_pane) return;
+    var status = left_pane.$(div.connect-status);
+    if (!status) return;
+    var (bx, by, bw, bh) = view.box(#rectw, #border, #screen);
+    // Window frame (title bar and borders): outer size minus client size.
+    var cw = 0;
+    var ch = 0;
+    try {
+        var (ccx, ccy, ccw, cch) = view.box(#rectw, #client, #screen);
+        cw = ccw;
+        ch = cch;
+    } catch (e) {
+    }
+    if (!ch) ch = self.clientHeight;
+    if (!ch) return;
+    if (!cw) cw = bw;
+    var frame_w = bw - cw;
+    var frame_h = bh - ch;
+    if (frame_h < 0 || frame_w < 0) {
+        // Unreliable client metrics; resizing now would shrink the window.
+        if (!fit_fail_logged) {
+            fit_fail_logged = true;
+            stdout.println("fit skip: frame=", frame_w, "x", frame_h,
+                " win=", bw, "x", bh, " client=", cw, "x", ch);
+        }
+        return;
+    }
+    // The pane runs with height:auto in incoming mode, so its own height is the
+    // content height.
+    var content_h = left_pane.box(#height, #border);
+    if (Math.abs(content_h - ch) < 1) {
+        // Still stretched to the window; fall back to the status offset. The
+        // reference must be a coordinate system keyword, not an element.
+        try {
+            content_h = status.box(#top, #border, #parent)
+                + status.box(#height, #border);
+        } catch (e) {
+            content_h = 0;
+        }
+    }
+    if (content_h <= 0) return;
+    // Same as Flutter: fixed incoming width, height follows the content.
+    var w = scaleIt(incoming_only_width) + frame_w;
+    var h = content_h + frame_h + scaleIt(10);
+    var min_h = scaleIt(300);
+    if (h < min_h) h = min_h;
+    if (Math.abs(h - bh) < 2 && Math.abs(w - bw) < 2) return;
+    view.move(bx, by, w, h);
+}
+
+// Keep re-fitting on the status element's own timer; it is independent from the
+// document level timers and from the Reactor lifecycle hooks.
+function scheduleIncomingWindowFit() {
+    fitIncomingWindowSize();
+    var el = $(div.connect-status);
+    if (!el) el = $(div.left-pane);
+    if (el) el.timer(500ms, scheduleIncomingWindowFit);
+}
+
 class ConnectStatus: Reactor.Component {
     function render() {
         return
@@ -87,8 +203,8 @@ class ConnectStatus: Reactor.Component {
         }
         // 服务就绪后，显示地址簿信息
         if (ab_info != "") {
-            var abInfo = <span style="background-color: rgba(0, 122, 255, 0.1); color: #007AFF; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-left: 8px;">{ab_info}</span>;
-            if (!handler.using_public_server()) return <span>{translate('Ready')}&nbsp;&nbsp;&nbsp;{abInfo}</span>;
+            var abInfo = <span title={ab_info} style="display: inline-block; vertical-align: middle; max-width: 9em; white-space: nowrap; overflow-x: hidden; text-overflow: ellipsis; background-color: rgba(0, 122, 255, 0.1); color: #007AFF; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-left: 8px;">{ab_info}</span>;
+            if (!handler.using_public_server()) return <span style="white-space: nowrap">{translate('Ready')}&nbsp;&nbsp;&nbsp;{abInfo}</span>;
         }
         if (!handler.using_public_server()) return translate('Ready');
         return <span>{translate("Ready")}, <span .link #setup-server>{translate("setup_server_tip")}</span></span>;
@@ -148,6 +264,13 @@ function showBindDeviceDialogInternal(oldAbName, oldAbAlias, oldDeviceUsername, 
     
     // 用全局变量保存选中的地址簿
     gSelectedAbName = oldAbName;
+
+    // The narrowed incoming-only window cannot fit the dialog, widen it first.
+    var box_width = get_msgbox_width();
+    if (incoming_only) {
+        enlargeWindowForBindDevice();
+        box_width = 640;
+    }
     
     var html = "<div .form .set-password> \
         <div><span>* 地址簿: </span><select|dropdown #ab-select style='width: 200px;'>" + optionsHtml + "</select></div> \
@@ -157,7 +280,10 @@ function showBindDeviceDialogInternal(oldAbName, oldAbAlias, oldDeviceUsername, 
         </div>";
     
     msgbox("custom-bind-device", "绑定设备", html, "", function(res=null) {
-            if (!res) return;
+            if (!res) {
+                restoreWindowForBindDevice();
+                return;
+            }
             var abName = gSelectedAbName.trim();
             var abAlias = (res["ab-alias"] || "").trim();
             var deviceUsername = (res["device-username"] || "").trim();
@@ -169,7 +295,8 @@ function showBindDeviceDialogInternal(oldAbName, oldAbAlias, oldDeviceUsername, 
             handler.set_option("preset-device-username", deviceUsername);
             handler.set_option("preset-device-name", deviceName);
             app.update();
-        }, msgbox_default_height, get_msgbox_width()
+            restoreWindowForBindDevice();
+        }, msgbox_default_height, box_width
     );
 }
 
@@ -793,12 +920,53 @@ class App: Reactor.Component
         app = this;
     }
 
+    // Re-fit the window right after the content changed, like Flutter does from
+    // its measured left pane instead of polling.
+    function componentDidMount() {
+        fitIncomingWindowSize();
+    }
+
+    function componentDidUpdate() {
+        fitIncomingWindowSize();
+    }
+
     function render() {
-        var is_can_screen_recording = handler.is_can_screen_recording(false);
+        // The script method is missing when the binary is older than these
+        // sources; it must not abort the whole render.
+        var is_can_screen_recording = true;
+        try { is_can_screen_recording = handler.is_can_screen_recording(false); } catch (e) {}
+        // Show only one help banner, in the same priority order as Flutter
+        // buildHelpCards().
+        var help_banner = "";
+        if (software_update_url && !disable_installation) {
+            help_banner = <UpdateMe />;
+        } else if (system_error) {
+            help_banner = <SystemError />;
+        } else if (is_win && !disable_installation && !handler.is_installed()) {
+            help_banner = <InstallMe />;
+        } else if (is_win && !disable_installation && !software_update_url
+            && handler.is_installed() && handler.is_installed_lower_version()) {
+            help_banner = <UpgradeMe />;
+        } else if (is_osx) {
+            if (!is_can_screen_recording) {
+                help_banner = <CanScreenRecording />;
+            } else if (!handler.is_process_trusted(false)) {
+                help_banner = <TrustMe />;
+            } else if (!service_stopped && handler.is_installed()
+                && !handler.is_installed_daemon(false)) {
+                help_banner = <InstallDaemon />;
+            }
+        } else if (is_linux) {
+            if (!handler.current_is_wayland() && handler.is_login_wayland()) {
+                help_banner = <FixWayland />;
+            } else if (handler.current_is_wayland()) {
+                help_banner = <ModifyDefaultLogin />;
+            }
+        }
         return
             <div .app>
-                    <div .left-pane style={incoming_only ? "width:*" : ""}>
-                    <div>
+                    <div class={incoming_only ? "left-pane incoming-only" : "left-pane"} style={incoming_only ? "width:*" : ""}>
+                    <div style={incoming_only ? "padding-bottom: 20px" : ""}>
                         {is_custom_client && handler.get_builtin_option("hide-powered-by-me") != "Y" ? <div .link #powered-by style="opacity:0.5;font-size:0.8em;text-decoration:underline">{translate('powered_by_me')}</div> : ""}
                         <div .title style="flow:horizontal; position:relative; height:1.6em; line-height:1.6em">
                             <span>{translate('Your Desktop')}</span>
@@ -813,15 +981,7 @@ class App: Reactor.Component
                         </div>}
                         {!outgoing_only && <PasswordArea />}
                     </div>
-                    {(!is_win || handler.is_installed() || disable_installation) ? "" : <InstallMe />}
-                    {software_update_url && !disable_installation ? <UpdateMe /> : ""}
-                    {is_win && handler.is_installed() && !software_update_url && handler.is_installed_lower_version() && !disable_installation ? <UpgradeMe /> : ""}
-                    {is_can_screen_recording ? "": <CanScreenRecording />}
-                    {is_can_screen_recording && !handler.is_process_trusted(false) ? <TrustMe /> : ""}
-                    {!service_stopped && is_can_screen_recording && handler.is_process_trusted(false) && handler.is_installed() && !handler.is_installed_daemon(false) ? <InstallDaemon /> : ""}
-                    {system_error ? <SystemError /> : ""}
-                    {!system_error && handler.is_login_wayland() && !handler.current_is_wayland() ? <FixWayland /> : ""}
-                    {!system_error && handler.current_is_wayland() ? <ModifyDefaultLogin /> : ""}
+                    {help_banner}
                     {incoming_only ? <ConnectStatus @{this.connect_status} /> : ""}
                 </div>
                 {!incoming_only && <div .right-pane>
@@ -1478,6 +1638,14 @@ function self.ready() {
     if (!handler.get_remote_id()) {
         view.focus = $(#remote_id);
     }
+    if (incoming_only) {
+        // The narrow incoming-only window is fully occupied by the left pane.
+        var left_pane = $(div.left-pane);
+        if (left_pane) {
+            left_pane.style.set { width: "*" };
+        }
+        scheduleIncomingWindowFit();
+    }
     refreshCurrentUser();
     updateTheme();
 }
@@ -1563,6 +1731,7 @@ function checkConnectStatus() {
             app.connect_status.update();
         }
         check_if_overlay();
+        fitIncomingWindowSize();
         checkConnectStatus();    
     });                          
 }                                

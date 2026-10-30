@@ -60,6 +60,23 @@ body {
     right: 0;
 }
 
+/* In incoming-only mode the window height follows the pane content, so the pane
+   grows with its content and the connect status stays in the flow. */
+.left-pane.incoming-only {
+    height: auto;
+}
+
+.left-pane.incoming-only > div.connect-status {
+    position: static;
+    /* width:100% plus the element's own padding overflows the pane, which clips
+       the top divider; * fills the pane width instead. */
+    width: *;
+}
+
+.left-pane.incoming-only > div:nth-child(1) {
+    padding-bottom: 20px;
+}
+
 .left-pane div {
   word-wrap: break-word;
 }

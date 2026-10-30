@@ -127,12 +127,16 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               ),
             ).marginSymmetric(horizontal: em),
             Container(
-              width: isIncomingOnly ? 226 : null,
+              constraints: isIncomingOnly
+                  ? const BoxConstraints(maxWidth: 226)
+                  : null,
               child: _buildConnStatusMsg(),
             ),
             // 服务就绪后显示地址簿信息
             if (stateGlobal.svcStatus.value == SvcStatus.ready)
-              _buildAddressBookInfo(),
+              isIncomingOnly
+                  ? Flexible(child: _buildAddressBookInfo())
+                  : _buildAddressBookInfo(),
             // stop
             if (!isIncomingOnly) startServiceWidget(),
             // ready && public
