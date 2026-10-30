@@ -403,6 +403,70 @@ async fn handle_config_options(
     Ok(())
 }
 
+/// `reset-pwd` and the authentication options only apply to the host that serves
+/// connections, so the controller-side strategy must not persist them: a local
+/// value would overwrite the host's own setting.
+const CLIENT_STRATEGY_IGNORED: [&str; 4] = [
+    "reset-pwd",
+    "2fa",
+    keys::OPTION_ENABLE_TRUSTED_DEVICES,
+    keys::OPTION_TRUSTED_DEVICE_EXPIRATION,
+];
+
+fn handle_config_options_client(mut config_options: HashMap<String, String>) {
+    let ignored: Vec<&str> = CLIENT_STRATEGY_IGNORED
+        .into_iter()
+        .filter(|key| config_options.remove(*key).is_some())
+        .collect();
+    if !ignored.is_empty() {
+        log::info!("Ignoring client strategy options: {}", ignored.join(","));
+    }
+    // Log the keys only: the values can carry a password or the relay key.
+    let keys: Vec<&str> = config_options.keys().map(String::as_str).collect();
+    log::info!("client strategy options: {}", keys.join(","));
+
+    let mut options = Config::get_options();
+    let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
+    config_options
+        .iter()
+        .map(|(k, v)| {
+            // Priority: user config > default advanced options.
+            // Only when default advanced options are also empty, remove user option (fallback to built-in default);
+            // otherwise insert an empty value so user config remains present.
+            if v.is_empty() && default_settings.get(k).map_or("", |v| v).is_empty() {
+                options.remove(k);
+            } else {
+                options.insert(k.to_string(), v.to_string());
+            }
+        })
+        .count();
+    Config::set_options(options);
+}
+
+/// Apply the controller-side strategy options (`client_strategy.config_options`
+/// from login and `/api/currentUser`).
+///
+/// The authentication revocation path and `reset-pwd` only apply to the host
+/// that serves connections, so this path only merges the options.
+///
+/// `client_strategy_timestamp` is stored once the options are merged, so an
+/// invalid payload is retried on the next login / `/api/currentUser`.
+pub(crate) fn apply_client_strategy(json: &str, modified_at: &str) {
+    if LocalConfig::get_option("client_strategy_timestamp") == modified_at {
+        return;
+    }
+
+    let options: HashMap<String, String> = match serde_json::from_str(json) {
+        Ok(options) => options,
+        Err(err) => {
+            log::warn!("Invalid client strategy options: {err}");
+            return;
+        }
+    };
+    handle_config_options_client(options);
+    LocalConfig::set_option("client_strategy_timestamp".to_owned(), modified_at.to_owned());
+}
+
 #[allow(unused)]
 #[cfg(not(any(target_os = "ios")))]
 pub fn is_pro() -> bool {

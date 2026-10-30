@@ -914,8 +914,8 @@ Future<bool?> _openLoginDialog() async {
                     LoginResponse? resp;
                     try {
                       // access_token is already stored in the rust side.
-                      resp =
-                          gFFI.userModel.getLoginResponseFromAuthBody(authBody);
+                      resp = await gFFI.userModel
+                          .getLoginResponseFromAuthBody(authBody);
                     } catch (e) {
                       debugPrint(
                           'Failed to parse oidc login body: "$authBody"');
