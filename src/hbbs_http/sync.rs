@@ -361,7 +361,6 @@ const BLOCKED_CONFIG_OPTIONS: &[&str] = &[
     keys::OPTION_ICE_SERVERS,
     // Transport security.
     keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK,
-    keys::OPTION_ALLOW_WEBSOCKET,
     keys::OPTION_WEBSOCKET_PORT,
     // Authentication and credentials.
     "reset-pwd",
@@ -370,13 +369,12 @@ const BLOCKED_CONFIG_OPTIONS: &[&str] = &[
     keys::OPTION_PRESET_ADDRESS_BOOK_PASSWORD,
     keys::OPTION_ENABLE_TRUSTED_DEVICES,
     keys::OPTION_TRUSTED_DEVICE_EXPIRATION,
-    // Deployment and address book metadata.
-    keys::OPTION_PRESET_ADDRESS_BOOK_NAME,
+    // Deployment and address book metadata. `preset-address-book-name/alias`
+    // and `preset-device-name/username` are excluded: `/api/heartbeat` in
+    // `rustdesk-api` always writes them on `modified_at` change, so blocking
+    // them disables the feature rather than guarding it.
     keys::OPTION_PRESET_ADDRESS_BOOK_TAG,
-    keys::OPTION_PRESET_ADDRESS_BOOK_ALIAS,
     keys::OPTION_PRESET_ADDRESS_BOOK_NOTE,
-    keys::OPTION_PRESET_DEVICE_NAME,
-    keys::OPTION_PRESET_DEVICE_USERNAME,
     keys::OPTION_PRESET_NOTE,
     // Recording location and service state.
     keys::OPTION_WINDOWS_SERVICE_VIDEO_SAVE_DIRECTORY,
@@ -657,19 +655,14 @@ mod strategy_tests {
                 "key",
                 "ice-servers",
                 "allow-insecure-tls-fallback",
-                "allow-websocket",
                 "websocket-port",
                 "2fa",
                 "bot",
                 "preset-address-book-password",
                 "enable-trusted-devices",
                 "trusted-device-expiration-days",
-                "preset-address-book-name",
                 "preset-address-book-tag",
-                "preset-address-book-alias",
                 "preset-address-book-note",
-                "preset-device-name",
-                "preset-device-username",
                 "preset-note",
                 "windows-service-video-save-directory",
                 "stop-service",
