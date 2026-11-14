@@ -2275,8 +2275,11 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
   @override
   Widget build(BuildContext context) {
     final isVirtualDisplay = ffiModel.isVirtualDisplayResolution;
+    final supersampleTarget = ffiModel.keyboard ? _supersampleTarget : null;
     final visible = ffiModel.keyboard &&
-        (isVirtualDisplay || resolutions.length > 1) &&
+        (isVirtualDisplay ||
+            resolutions.length > 1 ||
+            supersampleTarget != null) &&
         pi.currentDisplay != kAllDisplayValue;
     if (!visible) return Offstage();
     final showOriginalBtn =
@@ -2288,6 +2291,7 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
       menuChildren: <Widget>[
             _OriginalResolutionMenuButton(context, showOriginalBtn),
             _FitLocalResolutionMenuButton(context, showFitLocalBtn),
+            _supersampleResolutionMenuButton(supersampleTarget),
             _customResolutionMenuButton(context, isVirtualDisplay),
             _menuDivider(showOriginalBtn, showFitLocalBtn, isVirtualDisplay),
           ] +
@@ -2503,6 +2507,18 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
     ).workaroundFreezeLinuxMint();
   }
 
+  Widget _supersampleResolutionMenuButton(Resolution? target) {
+    if (target == null) {
+      return Offstage();
+    }
+    return RdoMenuButton(
+        value: '${target.width}x${target.height}',
+        groupValue: _groupValue,
+        onChanged: (String? value) => _onChanged(value),
+        ffi: widget.ffi,
+        child: Text('${target.width}x${target.height}'));
+  }
+
   List<Widget> _supportedResolutionMenuButtons() => resolutions
       .map((e) => RdoMenuButton(
           value: '${e.width}x${e.height}',
@@ -2541,6 +2557,41 @@ class _ResolutionsMenuState extends State<_ResolutionsMenu> {
     }
     return bestFitResolution.width == rect?.width.toInt() &&
         bestFitResolution.height == rect?.height.toInt();
+  }
+
+  /// The size to ask the peer for when supersampling, or null when the entry
+  /// does not apply.
+  ///
+  /// Supersampling renders the peer's desktop into a framebuffer as big as the
+  /// local screen and lets its panel downsample it, so filling the window costs
+  /// real pixels instead of magnifying a smaller image. Only an X11 peer can do
+  /// it, and only for a size it has no mode for.
+  Resolution? get _supersampleTarget {
+    if (isWeb || isMobile) {
+      return null;
+    }
+    if (pi.platform != kPeerPlatformLinux || pi.isWayland) {
+      return null;
+    }
+    if (pi.displays.length != 1) {
+      // The framebuffer spans the whole X screen, so growing it needs a single
+      // enabled output.
+      return null;
+    }
+    if (resolutions.isEmpty) {
+      return null;
+    }
+    final local = _localResolution;
+    if (local == null) {
+      return null;
+    }
+    if (!resolutions
+        .every((r) => local.width > r.width && local.height > r.height)) {
+      // A mode the panel has already reaches the local size in at least one
+      // direction, so switching to it beats scaling a smaller framebuffer up.
+      return null;
+    }
+    return local;
   }
 }
 
