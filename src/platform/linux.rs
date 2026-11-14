@@ -29,7 +29,7 @@ use std::{
     process::{Child, Command},
     string::String,
     sync::atomic::{AtomicBool, Ordering},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use terminfo::{capability as cap, Database};
@@ -2227,9 +2227,217 @@ DP-0 disconnected (normal left inverted right x axis y axis)
         assert!(caps["resolutions"].contains(" 1280x720 "));
         assert!(caps["resolutions"].contains(" 640x480 "));
     }
+
+    #[test]
+    fn scaled_geometry_still_reports_the_panel_mode() {
+        // A supersampled screen shows the framebuffer size as the connected
+        // geometry, so only the marked mode line tells how big the panel is.
+        let xrandr_output =
+            "Screen 0: minimum 320 x 200, current 3072 x 1920, maximum 16384 x 16384
+HDMI-0 connected primary 3072x1920+0+0 (normal left inverted right x axis y axis) 509mm x 286mm
+ 1920x1080 60.00*+ 59.94
+ 1280x720 60.00
+";
+        assert_eq!(
+            current_xrandr_mode(xrandr_output, "HDMI-0"),
+            Some((1920, 1080))
+        );
+        assert!(!has_xrandr_mode(xrandr_output, "HDMI-0", 3072, 1920));
+        assert_eq!(get_xrandr_enabled_output_count(xrandr_output), 1);
+    }
+
+    #[test]
+    fn scale_ratio_keeps_the_digits_that_matter() {
+        assert_eq!(get_xrandr_scale(3072, 1920), "1.6");
+        assert_eq!(get_xrandr_scale(3840, 1920), "2");
+        assert_eq!(get_xrandr_scale(1920, 1080), "1.777778");
+    }
 }
 
+/// The mode lines listed under `name`, or `None` when the output is not there.
+fn get_xrandr_mode_block(query: &str, name: &str) -> Option<String> {
+    let re = Regex::new(&format!(
+        "{}{}",
+        get_xrandr_conn_pat(name),
+        XRANDR_MODES_PAT
+    ))
+    .ok()?;
+    let block = re.captures(query)?.name("resolutions")?.as_str();
+    Some(block.to_owned())
+}
+
+/// "1920x1080 60.01*+ 59.97" -> (1920, 1080).
+fn get_mode_size_from_line(line: &str) -> Option<(usize, usize)> {
+    let (width, height) = line.trim().split_whitespace().next()?.split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
+}
+
+/// The mode the output runs, the one marked `*`. Unlike `current_resolution()`,
+/// which reports the scaled bounding box once a `--scale` is in effect, this
+/// still answers how big the panel itself is.
+fn current_xrandr_mode(query: &str, name: &str) -> Option<(usize, usize)> {
+    let block = get_xrandr_mode_block(query, name)?;
+    block
+        .lines()
+        .filter(|line| line.contains('*'))
+        .find_map(|line| get_mode_size_from_line(line))
+}
+
+fn has_xrandr_mode(query: &str, name: &str, width: usize, height: usize) -> bool {
+    match get_xrandr_mode_block(query, name) {
+        Some(block) => block
+            .lines()
+            .filter_map(|line| get_mode_size_from_line(line))
+            .any(|(w, h)| w == width && h == height),
+        None => false,
+    }
+}
+
+/// The outputs with a mode in use. The framebuffer is shared by the whole X
+/// screen, so growing it for one output would push or clip the others.
+fn get_xrandr_enabled_output_count(query: &str) -> usize {
+    match Regex::new(r"(?m)^\S+ connected .+?\d+x\d+\+") {
+        Ok(re) => re.find_iter(query).count(),
+        Err(_) => 0,
+    }
+}
+
+/// The `maximum W x H` the X screen can allocate for `--fb`.
+fn get_xrandr_screen_max(query: &str) -> Option<(usize, usize)> {
+    let caps = Regex::new(r"maximum (\d+) x (\d+)").ok()?.captures(query)?;
+    Some((caps[1].parse().ok()?, caps[2].parse().ok()?))
+}
+
+/// xrandr reads the scale as a decimal. Six digits keep the scaled box on the
+/// requested size, so it still fits the framebuffer asked for below.
+fn get_xrandr_scale(target: usize, mode: usize) -> String {
+    let text = format!("{:.6}", target as f64 / mode as f64);
+    match text.split_once('.') {
+        Some((int_part, frac)) => {
+            let frac = frac.trim_end_matches('0');
+            if frac.is_empty() {
+                int_part.to_owned()
+            } else {
+                format!("{}.{}", int_part, frac)
+            }
+        }
+        None => text,
+    }
+}
+
+/// A size the output has no mode for is how the client asks for a supersampled
+/// framebuffer: the desktop is rendered at that size and the GPU downsamples it
+/// onto the panel, so the controller gets real pixels instead of an interpolated
+/// blow-up of a smaller image.
+///
+/// `None` leaves the request to the plain `--mode` switch, which is also the
+/// answer when this session cannot do the supersampling.
+fn get_xrandr_supersample_args(name: &str, width: usize, height: usize) -> Option<Vec<String>> {
+    let query = run_cmds("xrandr --query | tr -s ' '").ok()?;
+    let mode = current_xrandr_mode(&query, name)?;
+    let geometry = match Regex::new(&get_xrandr_conn_pat(name))
+        .ok()
+        .and_then(|re| re.captures(&query))
+        .and_then(|caps| get_width_height_from_captures(&caps))
+    {
+        Some((width, height)) => (width as usize, height as usize),
+        None => return None,
+    };
+    // Only an overscale of our own may be cleared: a transform the peer set by
+    // hand is none of our business.
+    let our_supersample_in_effect = geometry.0 > mode.0 && geometry.1 > mode.1;
+    let size_arg = format!("{}x{}", width, height);
+    if has_xrandr_mode(&query, name, width, height) {
+        // A real mode answers the request, unless the oversized framebuffer and
+        // its scale both have to go with it.
+        if !our_supersample_in_effect {
+            return None;
+        }
+        return Some(vec![
+            "--output".to_owned(),
+            name.to_owned(),
+            "--mode".to_owned(),
+            size_arg.clone(),
+            "--scale".to_owned(),
+            "1x1".to_owned(),
+            "--fb".to_owned(),
+            size_arg,
+        ]);
+    }
+    if width <= mode.0 || height <= mode.1 {
+        return None;
+    }
+    if geometry != mode {
+        // A rotation or a scale set outside of RustDesk. Stacking our own scale
+        // on top of it is not worth working out.
+        log::info!(
+            "Not supersampling '{}' to {}x{}: the output does not run its panel mode 1:1",
+            name,
+            width,
+            height
+        );
+        return None;
+    }
+    // The framebuffer belongs to the whole X screen, so growing it would push or
+    // clip any other enabled output.
+    if get_xrandr_enabled_output_count(&query) != 1 {
+        log::info!(
+            "Not supersampling '{}': only a single enabled output is supported",
+            name
+        );
+        return None;
+    }
+    if let Some((max_width, max_height)) = get_xrandr_screen_max(&query) {
+        if width > max_width || height > max_height {
+            log::error!(
+                "Skip supersampling '{}' to {}x{}, the screen holds at most {}x{}",
+                name,
+                width,
+                height,
+                max_width,
+                max_height
+            );
+            return None;
+        }
+    }
+    Some(vec![
+        "--output".to_owned(),
+        name.to_owned(),
+        "--scale".to_owned(),
+        format!(
+            "{}x{}",
+            get_xrandr_scale(width, mode.0),
+            get_xrandr_scale(height, mode.1)
+        ),
+        "--fb".to_owned(),
+        size_arg,
+    ])
+}
+
+/// One xrandr write is several requests to the X server -- mode, scale and the screen
+/// framebuffer go separately -- so two controllers changing the resolution of the same
+/// peer at the same time can interleave and leave the screen in a state neither of them
+/// asked for. Reading the current configuration and applying the new one have to be one
+/// step, which is what this serializes. Resolution changes are rare and an explicit user
+/// action, so the callers just queue behind each other.
+static XRANDR_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn change_resolution_directly(name: &str, width: usize, height: usize) -> ResultType<()> {
+    // A poisoned lock still locks, and nothing in memory is guarded by it.
+    let _lock = XRANDR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(args) = get_xrandr_supersample_args(name, width, height) {
+        // Wait for xrandr here: a panel or driver that refuses the scale has to
+        // reach the log, otherwise the caller thinks the framebuffer grew.
+        let output = Command::new("xrandr").args(&args).output()?;
+        if !output.status.success() {
+            bail!(
+                "Failed to supersample '{}': {}",
+                name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        return Ok(());
+    }
     Command::new("xrandr")
         .args(vec![
             "--output",
