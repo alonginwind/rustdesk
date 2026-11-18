@@ -1,0 +1,43 @@
+diff --git a/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp b/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp
+index 700cab0..de92ce0 100644
+--- a/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp
++++ b/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp
+@@ -121,6 +121,7 @@ public:
+   AVPixelFormat hw_pixfmt_ = AV_PIX_FMT_NONE;
+   AVBufferRef *hw_device_ctx_ = NULL;
+   AVFrame *hw_frame_ = NULL;
++  bool cqp_retry_ = false;
+ 
+   FFmpegRamEncoder(const char *name, const char *mc_name, int width, int height,
+                    int pixfmt, int align, int fps, int gop, int rc, int quality,
+@@ -237,6 +238,15 @@ public:
+     }
+     // util_encode::set_quality(c_->priv_data, name_, quality_);
+     util_encode::set_rate_control(c_, name_, rc_, q_);
++    if (cqp_retry_) {
++      // Some VAAPI drivers (e.g. Gen9.x iHD/i965) support CQP as the only rate
++      // control mode and reject the bitrate-based request with EINVAL. CQP
++      // ignores kbs and takes global_quality (0-51, lower is better) as the
++      // fixed qp instead.
++      int qp = (q_ >= 0 && q_ <= 51) ? q_ : 25;
++      av_opt_set(c_->priv_data, "rc_mode", "CQP", 0);
++      c_->global_quality = qp;
++    }
+     util_encode::set_gpu(c_->priv_data, name_, gpu_);
+     util_encode::force_hw(c_->priv_data, name_);
+     util_encode::set_others(c_->priv_data, name_);
+@@ -253,6 +263,14 @@ public:
+     if ((ret = avcodec_open2(c_, codec, NULL)) < 0) {
+       LOG_ERROR(std::string("avcodec_open2 failed, ret = ") + av_err2str(ret) +
+                 ", name: " + name_);
++      // Retry the whole init from scratch with CQP rate control so every
++      // context and hw resource is rebuilt cleanly. Drivers that accept the
++      // bitrate request never enter this path.
++      if (hw_device_type_ == AV_HWDEVICE_TYPE_VAAPI && !cqp_retry_) {
++        cqp_retry_ = true;
++        free_encoder();
++        return init(linesize, offset, length);
++      }
+       return false;
+     }
+ 

@@ -5,6 +5,19 @@ if [ "$1" == "android" ]; then
     cd flutter
     flutter build apk --release --target-platform android-arm64 --split-per-abi  --obfuscate --split-debug-info ./split-debug-info
 elif [ "$1" == "linux" ]; then
+    # Apply the VAAPI CQP fallback to the hwcodec checkout pinned by Cargo.lock,
+    # so CQP-only drivers (e.g. Gen9.x iHD) can use h264_vaapi. Idempotent; the
+    # retry only triggers when the driver rejects bitrate rate control.
+    patch_file="$PWD/.github/patches/hwcodec_vaapi_cqp.diff"
+    cargo fetch --locked || exit 1
+    for d in "${CARGO_HOME:-$HOME/.cargo}"/git/checkouts/hwcodec-*/*/; do
+        if [ -f "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" ] && \
+           git -C "$d" rev-parse -q --verify HEAD 2>/dev/null | grep -q '^ec38ebaf2454269d4c5668a57e3813c6e5541be7$' && \
+           ! grep -q 'cqp_retry_' "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" 2>/dev/null; then
+            git -C "$d" apply "$patch_file" || exit 1
+            echo "patched hwcodec for VAAPI CQP-only drivers"
+        fi
+    done
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
     python3 ./build.py --flutter --skip-cargo
 elif [ "$1" == "windows" ]; then
