@@ -1,5 +1,5 @@
 use crate::{
-    codec::{base_bitrate, codec_thread_num, enable_hwcodec_option, EncoderApi, EncoderCfg},
+    codec::{base_bitrate, codec_thread_num, enable_hwcodec_option, EncoderApi, EncoderCfg, BR_BALANCED},
     convert::*,
     CodecFormat, EncodeInput, ImageFormat, ImageRgb, Pixfmt, HW_STRIDE_ALIGN,
 };
@@ -60,6 +60,16 @@ pub struct HwRamEncoder {
     config: HwRamEncoderConfig,
 }
 
+/// Bitrate ratio -> CQP qp for drivers that reject rate control and fall back to
+/// constant quality (hwcodec VaapiCqp patch). Anchored so Balanced (0.67) maps to
+/// qp 31, halving the bitrate of the previous fixed qp 25 on motion-heavy scenes.
+/// Only consumed by the CQP fallback and mediacodec RC_CQ; bitrate-mode encoders
+/// ignore `q`, so other backends are unaffected.
+fn quality_to_qp(ratio: f32) -> i32 {
+    let qp = 31.0 - 10.0 * (ratio / BR_BALANCED).ln() / 2f32.ln();
+    qp.clamp(22.0, 36.0) as i32
+}
+
 impl EncoderApi for HwRamEncoder {
     fn new(cfg: EncoderCfg, _i444: bool) -> ResultType<Self>
     where
@@ -84,7 +94,7 @@ impl EncoderApi for HwRamEncoder {
                     gop,
                     quality: DEFAULT_HW_QUALITY,
                     rc,
-                    q: -1,
+                    q: quality_to_qp(config.quality),
                     thread_count: codec_thread_num(16) as _, // ffmpeg's thread_count is used for cpu
                 };
                 let format = match Encoder::format_from_name(config.name.clone()) {
