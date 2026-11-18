@@ -2105,6 +2105,19 @@ jobs:
             # start build
             pushd /workspace
             export VCPKG_ROOT=/opt/artifacts/vcpkg
+            # Apply the VAAPI CQP fallback to the hwcodec checkout pinned by
+            # Cargo.lock, so CQP-only drivers (e.g. Gen9.x iHD) can encode with
+            # h264_vaapi. Idempotent: only the checkout matching the locked rev
+            # is touched, and an already-patched tree is skipped.
+            cargo fetch --locked
+            for d in "${CARGO_HOME:-$HOME/.cargo}"/git/checkouts/hwcodec-*/*/; do
+              if [ -f "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" ] && \
+                 git -C "$d" rev-parse -q --verify HEAD 2>/dev/null | grep -q '^ec38ebaf2454269d4c5668a57e3813c6e5541be7$' && \
+                 ! grep -q 'cqp_retry_' "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" 2>/dev/null; then
+                git -C "$d" apply /workspace/.github/patches/hwcodec_vaapi_cqp.diff || exit 1
+                echo "patched hwcodec for VAAPI CQP-only drivers"
+              fi
+            done
             if [[ "${{ matrix.job.arch }}" == "aarch64" ]]; then
               export JOBS="--jobs 3"
             else
@@ -2426,6 +2439,20 @@ jobs:
             # start build
             pushd /workspace
             export VCPKG_ROOT=/opt/artifacts/vcpkg
+            # Apply the VAAPI CQP fallback to the hwcodec checkout pinned by
+            # Cargo.lock, so CQP-only drivers (e.g. Gen9.x iHD) can encode with
+            # h264_vaapi. Idempotent: only the checkout matching the locked rev
+            # is touched, and an already-patched tree is skipped. Must run before
+            # the first cargo test so no unpatched hwcodec artifacts get cached.
+            cargo fetch --locked
+            for d in "${CARGO_HOME:-$HOME/.cargo}"/git/checkouts/hwcodec-*/*/; do
+              if [ -f "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" ] && \
+                 git -C "$d" rev-parse -q --verify HEAD 2>/dev/null | grep -q '^ec38ebaf2454269d4c5668a57e3813c6e5541be7$' && \
+                 ! grep -q 'cqp_retry_' "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" 2>/dev/null; then
+                git -C "$d" apply /workspace/.github/patches/hwcodec_vaapi_cqp.diff || exit 1
+                echo "patched hwcodec for VAAPI CQP-only drivers"
+              fi
+            done
             # use the .so built on the runner; build.py checks it is the pinned checkout
             export DRMTAP_PREBUILT_DIR=/workspace/third_party/libdrmtap/build-pkg
             # ask build.py for the features so this line and the packaging line cannot drift
@@ -2755,6 +2782,19 @@ jobs:
             cat ~/.cargo/config
             # install dependencies from vcpkg
             export VCPKG_ROOT=/opt/artifacts/vcpkg
+            # Apply the VAAPI CQP fallback to the hwcodec checkout pinned by
+            # Cargo.lock, so CQP-only drivers (e.g. Gen9.x iHD) can encode with
+            # h264_vaapi. Idempotent: only the checkout matching the locked rev
+            # is touched, and an already-patched tree is skipped.
+            cargo fetch --locked
+            for d in "${CARGO_HOME:-$HOME/.cargo}"/git/checkouts/hwcodec-*/*/; do
+              if [ -f "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" ] && \
+                 git -C "$d" rev-parse -q --verify HEAD 2>/dev/null | grep -q '^ec38ebaf2454269d4c5668a57e3813c6e5541be7$' && \
+                 ! grep -q 'cqp_retry_' "$d/cpp/ffmpeg_ram/ffmpeg_ram_encode.cpp" 2>/dev/null; then
+                git -C "$d" apply /workspace/.github/patches/hwcodec_vaapi_cqp.diff || exit 1
+                echo "patched hwcodec for VAAPI CQP-only drivers"
+              fi
+            done
             # remove this when support higher version
             export USE_AOM_391=1
             if ! $VCPKG_ROOT/vcpkg install --triplet ${{ matrix.job.vcpkg-triplet }} --x-install-root="$VCPKG_ROOT/installed"; then
