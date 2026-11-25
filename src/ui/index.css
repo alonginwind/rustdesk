@@ -225,6 +225,12 @@ div.connect-status > span.link {
   display: inline-block;
 }
 
+/* incoming-only narrow window: cap the address-book tag so it cannot overflow
+   the pane; normal mode has room and is left uncapped. */
+.left-pane.incoming-only .connect-status span.ab-info {
+    max-width: 9em;
+}
+
 span.connect-status-1 {
     background: #e04f5f;
 }

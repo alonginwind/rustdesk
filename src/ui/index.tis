@@ -204,7 +204,7 @@ class ConnectStatus: Reactor.Component {
         }
         // 服务就绪后，显示地址簿信息
         if (ab_info != "") {
-            var abInfo = <span title={ab_info} style="display: inline-block; vertical-align: middle; max-width: 9em; white-space: nowrap; overflow-x: hidden; text-overflow: ellipsis; background-color: rgba(0, 122, 255, 0.1); color: #007AFF; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-left: 8px;">{ab_info}</span>;
+            var abInfo = <span class="ab-info" title={ab_info} style="display: inline-block; vertical-align: middle; white-space: nowrap; overflow-x: hidden; text-overflow: ellipsis; background-color: rgba(0, 122, 255, 0.1); color: #007AFF; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-left: 8px;">{ab_info}</span>;
             if (!handler.using_public_server()) return <span style="white-space: nowrap">{translate('Ready')}&nbsp;&nbsp;&nbsp;{abInfo}</span>;
         }
         if (!handler.using_public_server()) return translate('Ready');
