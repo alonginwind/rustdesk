@@ -18,7 +18,7 @@ elif [ "$1" == "linux" ]; then
             echo "patched hwcodec for VAAPI CQP-only drivers"
         fi
     done
-    cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release
+    cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste,drm,drm-wake --release
     python3 ./build.py --flutter --skip-cargo
 elif [ "$1" == "windows" ]; then
     if [ ! -f "target/libsodium/build/lib/libsodium.a" ]; then
