@@ -21,6 +21,13 @@ body {
     size: *;
 }
 
+/* incoming-only: the fit leaves a small bottom reserve that would otherwise sit
+   on the transparent html root, showing as a see-through strip at the window's
+   bottom edge; paint the pane background over it. */
+.app.incoming-only {
+    background: color(bg);
+}
+
 .lighter-text {
     color: color(lighter-text);
     font-size: 0.9em;
@@ -68,8 +75,10 @@ body {
 
 .left-pane.incoming-only > div.connect-status {
     position: static;
-    /* push the ready text a bit away from the top border (base padding is 1em) */
+    /* skew the base 1em/1em padding so the ready text clears the top border
+       without growing the bar: total vertical padding stays 2em */
     padding-top: 1.5em;
+    padding-bottom: 0.1em;
     /* width:100% plus the element's own padding overflows the pane, which clips
        the top divider; * fills the pane width instead. */
     width: *;

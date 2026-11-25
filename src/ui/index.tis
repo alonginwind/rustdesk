@@ -969,7 +969,7 @@ class App: Reactor.Component
             }
         }
         return
-            <div .app>
+            <div class={incoming_only ? "app incoming-only" : "app"}>
                     <div class={incoming_only ? "left-pane incoming-only" : "left-pane"} style={incoming_only ? "width:*" : ""}>
                     <div style={incoming_only ? "padding-bottom: 20px" : ""}>
                         {is_custom_client && handler.get_builtin_option("hide-powered-by-me") != "Y" ? <div .link #powered-by style="opacity:0.5;font-size:0.8em;text-decoration:underline">{translate('powered_by_me')}</div> : ""}
