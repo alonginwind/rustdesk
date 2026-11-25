@@ -1003,7 +1003,7 @@ class App: Reactor.Component
                     </div>
                     {!outgoing_only ? <ConnectStatus @{this.connect_status} /> : ""}
                 </div>}
-                <div #overlay style="position: absolute;size:*;background:black;opacity:0.5;display:none" />
+                <div #overlay style="position: absolute;top:0;left:0;right:0;bottom:0;background:black;opacity:0.5;display:none" />
             </div>; 
     }
 
@@ -1775,7 +1775,20 @@ function check_if_overlay() {
         self.timer(120ms, function() {
             if (!enter) return;
             var d = time0 - handler.get_mouse_time();
-            if (d < 120) $(#overlay).style#display = 'block';
+            if (d < 120) {
+                if (incoming_only) {
+                    // Carve the bottom ready-status bar out of the overlay so it
+                    // stays visible and clickable while the block is on. A failed
+                    // measurement falls back to full coverage.
+                    try {
+                        var st = $(div.connect-status);
+                        $(#overlay).style#bottom = st ? st.box(#height, #border) : 0;
+                    } catch (e) {
+                        $(#overlay).style#bottom = 0;
+                    }
+                }
+                $(#overlay).style#display = 'block';
+            }
         });
     }
 }

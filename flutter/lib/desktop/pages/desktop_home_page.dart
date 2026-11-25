@@ -55,19 +55,41 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
+  // Measures the incoming-only ready-status bar that is rendered below the
+  // block mask, so _updateWindowSize can add its height back to the window.
+  final GlobalKey _incomingStatusKey = GlobalKey();
   bool _holdIncomingOnlyWindowSize = false;
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final isIncomingOnly = bind.isIncomingOnly();
+    if (isIncomingOnly) {
+      // Keep the ready-status bar below the block mask so the local operator can
+      // still use it while a remote-config block is active. stop-service is
+      // hidden on the controlled side, so this exposes nothing sensitive.
+      // _updateWindowSize adds the bar's height back so the narrow window still
+      // fits its content.
+      return Column(children: [
+        Expanded(child: _buildBlock(child: buildLeftPane(context))),
+        KeyedSubtree(
+          key: _incomingStatusKey,
+          child: Column(children: [
+            const Divider(height: 1),
+            OnlineStatusWidget(
+              onSvcStatusChanged: () => _scheduleUpdateWindowSize(),
+            ).marginOnly(bottom: 6, right: 6, top: 8),
+          ]),
+        ),
+      ]);
+    }
     return _buildBlock(
         child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         buildLeftPane(context),
-        if (!isIncomingOnly) const VerticalDivider(width: 1),
-        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
+        const VerticalDivider(width: 1),
+        Expanded(child: buildRightPane(context)),
       ],
     ));
   }
@@ -116,14 +138,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         },
       ),
     ];
-    if (isIncomingOnly) {
-      children.addAll([
-        Divider(),
-        OnlineStatusWidget(
-          onSvcStatusChanged: () => _scheduleUpdateWindowSize(),
-        ).marginOnly(bottom: 6, right: 6)
-      ]);
-    }
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
@@ -1082,7 +1096,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       return;
     }
     if (renderObject is RenderBox) {
-      final size = renderObject.size;
+      var size = renderObject.size;
+      // The ready-status bar is rendered below the block mask, so it is not
+      // part of the measured content; add its height back to fit the window.
+      final statusRender = _incomingStatusKey.currentContext?.findRenderObject();
+      if (statusRender is RenderBox) {
+        size = Size(size.width, size.height + statusRender.size.height);
+      }
       if (size != imcomingOnlyHomeSize) {
         imcomingOnlyHomeSize = size;
         windowManager.setSize(getIncomingOnlyHomeSize());

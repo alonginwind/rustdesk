@@ -68,6 +68,8 @@ body {
 
 .left-pane.incoming-only > div.connect-status {
     position: static;
+    /* push the ready text a bit away from the top border (base padding is 1em) */
+    padding-top: 1.5em;
     /* width:100% plus the element's own padding overflows the pane, which clips
        the top divider; * fills the pane width instead. */
     width: *;
