@@ -129,6 +129,28 @@ pub fn would_block_if_equal(old: &mut Vec<u8>, b: &[u8]) -> std::io::Result<()> 
     Ok(())
 }
 
+/// Hash of one captured frame. Comparing hashes instead of comparing against a
+/// stored copy of the previous frame turns two full passes over the frame into a
+/// single pass, at the cost of a probabilistic (2^-64) instead of exact compare.
+pub fn frame_hash(data: &[u8]) -> u64 {
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut h = [K; 4];
+    let mut chunks = data.chunks_exact(32);
+    for c in &mut chunks {
+        for (lane, word) in h.iter_mut().zip(c.chunks_exact(8)) {
+            let v = u64::from_le_bytes([
+                word[0], word[1], word[2], word[3], word[4], word[5], word[6], word[7],
+            ]);
+            *lane = (*lane ^ v).wrapping_mul(K);
+        }
+    }
+    let mut tail = data.len() as u64;
+    for &b in chunks.remainder() {
+        tail = (tail ^ b as u64).wrapping_mul(K);
+    }
+    h[0] ^ h[1].rotate_left(21) ^ h[2].rotate_left(42) ^ h[3].rotate_left(11) ^ tail.wrapping_mul(K)
+}
+
 pub trait TraitCapturer {
     // We doesn't support
     #[cfg(not(any(target_os = "ios")))]

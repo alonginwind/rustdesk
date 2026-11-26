@@ -10,7 +10,7 @@ pub struct Capturer {
     buffer: *const u8,
 
     size: usize,
-    saved_raw_data: Vec<u8>, // for faster compare and copy
+    last_hash: Option<u64>, // for faster compare, see `crate::frame_hash`
 }
 
 impl Capturer {
@@ -63,7 +63,7 @@ impl Capturer {
             xcbid,
             buffer,
             size,
-            saved_raw_data: Vec::new(),
+            last_hash: None,
         };
         Ok(c)
     }
@@ -96,7 +96,11 @@ impl Capturer {
     pub fn frame<'b>(&'b mut self) -> std::io::Result<&'b [u8]> {
         self.get_image();
         let result = unsafe { slice::from_raw_parts(self.buffer, self.size) };
-        crate::would_block_if_equal(&mut self.saved_raw_data, result)?;
+        let hash = crate::frame_hash(result);
+        if self.last_hash == Some(hash) {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        self.last_hash = Some(hash);
         Ok(result)
     }
 }
