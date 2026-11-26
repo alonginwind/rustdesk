@@ -1,6 +1,7 @@
+use super::damage::{Damage, Hint};
 use super::ffi::*;
 use super::Display;
-use hbb_common::libc;
+use hbb_common::{libc, log};
 use std::{io, ptr, slice};
 
 pub struct Capturer {
@@ -11,6 +12,8 @@ pub struct Capturer {
 
     size: usize,
     last_hash: Option<u64>, // for faster compare, see `crate::frame_hash`
+    damage: Option<Damage>,
+    damage_misses: u32,
 }
 
 impl Capturer {
@@ -57,6 +60,8 @@ impl Capturer {
             );
         }
 
+        let damage = Damage::new(server, display.root());
+
         let c = Capturer {
             display,
             shmid,
@@ -64,6 +69,8 @@ impl Capturer {
             buffer,
             size,
             last_hash: None,
+            damage,
+            damage_misses: 0,
         };
         Ok(c)
     }
@@ -94,9 +101,38 @@ impl Capturer {
     }
 
     pub fn frame<'b>(&'b mut self) -> std::io::Result<&'b [u8]> {
+        let mut verify = false;
+        // The first frame is always captured: `last_hash` stays None until one is delivered.
+        if self.last_hash.is_some() {
+            if let Some(damage) = self.damage.as_mut() {
+                match damage.hint(self.display.server().raw()) {
+                    Hint::Idle => return Err(io::ErrorKind::WouldBlock.into()),
+                    Hint::Changed => {}
+                    Hint::Verify => verify = true,
+                }
+            }
+        }
         self.get_image();
         let result = unsafe { slice::from_raw_parts(self.buffer, self.size) };
         let hash = crate::frame_hash(result);
+        if verify {
+            if self.last_hash == Some(hash) {
+                self.damage_misses = 0;
+            } else {
+                // A single miss can also be a change that landed between the poll and the read,
+                // so only two verifies in a row show that damage never reports this window
+                // manager's painting: full captures only.
+                self.damage_misses += 1;
+                if self.damage_misses >= 2 {
+                    log::info!(
+                        "xdamage missed a screen change, falling back to full screen capture"
+                    );
+                    if let Some(damage) = self.damage.take() {
+                        damage.destroy(self.display.server().raw());
+                    }
+                }
+            }
+        }
         if self.last_hash == Some(hash) {
             return Err(io::ErrorKind::WouldBlock.into());
         }
@@ -107,6 +143,9 @@ impl Capturer {
 
 impl Drop for Capturer {
     fn drop(&mut self) {
+        if let Some(damage) = self.damage.take() {
+            damage.destroy(self.display.server().raw());
+        }
         unsafe {
             // Detach segment from XCB.
             xcb_shm_detach(self.display.server().raw(), self.xcbid);

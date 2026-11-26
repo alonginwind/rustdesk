@@ -100,6 +100,33 @@ extern "C" {
         e: *mut *mut xcb_generic_error_t,
     ) -> *mut xcb_get_geometry_reply_t;
 
+    pub fn xcb_flush(c: *mut xcb_connection_t) -> i32;
+
+    pub fn xcb_poll_for_event(c: *mut xcb_connection_t) -> *mut xcb_generic_event_t;
+
+    pub fn xcb_query_extension(
+        c: *mut xcb_connection_t,
+        name_len: u16,
+        name: *const i8,
+    ) -> xcb_query_extension_cookie_t;
+
+    pub fn xcb_query_extension_reply(
+        c: *mut xcb_connection_t,
+        cookie: xcb_query_extension_cookie_t,
+        e: *mut *mut xcb_generic_error_t,
+    ) -> *mut xcb_query_extension_reply_t;
+
+    pub fn xcb_query_tree_unchecked(
+        c: *mut xcb_connection_t,
+        window: xcb_window_t,
+    ) -> xcb_query_tree_cookie_t;
+
+    pub fn xcb_query_tree_reply(
+        c: *mut xcb_connection_t,
+        cookie: xcb_query_tree_cookie_t,
+        e: *mut *mut xcb_generic_error_t,
+    ) -> *mut xcb_query_tree_reply_t;
+
 }
 
 pub const XCB_IMAGE_FORMAT_Z_PIXMAP: u8 = 2;
@@ -280,4 +307,50 @@ pub struct xcb_get_geometry_reply_t {
     pub height: u16,
     pub border_width: u16,
     pub pad0: [u8; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct xcb_query_extension_cookie_t {
+    pub sequence: u32,
+}
+
+#[repr(C)]
+pub struct xcb_query_extension_reply_t {
+    pub response_type: u8,
+    pub pad0: u8,
+    pub sequence: u16,
+    pub length: u32,
+    pub present: u8,
+    pub major_opcode: u8,
+    pub first_event: u8,
+    pub first_error: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct xcb_query_tree_cookie_t {
+    pub sequence: u32,
+}
+
+// The reply is followed by `children_len` window ids, read past this struct.
+#[repr(C)]
+pub struct xcb_query_tree_reply_t {
+    pub response_type: u8,
+    pub pad0: u8,
+    pub sequence: u16,
+    pub length: u32,
+    pub root: xcb_window_t,
+    pub parent: xcb_window_t,
+    pub children_len: u16,
+    pub pad1: [u8; 14],
+}
+
+#[repr(C)]
+pub struct xcb_generic_event_t {
+    pub response_type: u8,
+    pub pad0: u8,
+    pub sequence: u16,
+    pub pad: [u32; 7],
+    pub full_sequence: u32,
 }
