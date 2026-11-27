@@ -106,15 +106,15 @@ impl CapturerGDI {
 
             let stride = self.width * PIXEL_WIDTH;
             let size: usize = (stride * self.height) as usize;
-            let mut data1: Vec<u8> = Vec::with_capacity(size);
-            data1.set_len(size);
             data.resize(size, 0);
 
             let mut bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: size_of::<BITMAPINFOHEADER>() as _,
                     biWidth: self.width as _,
-                    biHeight: self.height as _,
+                    // Negative height selects a top-down bitmap, which is what the
+                    // encoder expects.
+                    biHeight: -self.height,
                     biPlanes: 1,
                     biBitCount: (8 * PIXEL_WIDTH) as _,
                     biCompression: BI_RGB,
@@ -145,23 +145,6 @@ impl CapturerGDI {
             if res == 0 {
                 return Err("GetDIBits failed".into());
             }
-            crate::common::ARGBMirror(
-                data.as_ptr(),
-                stride,
-                data1.as_mut_ptr(),
-                stride,
-                self.width,
-                self.height,
-            );
-            crate::common::ARGBRotate(
-                data1.as_ptr(),
-                stride,
-                data.as_mut_ptr(),
-                stride,
-                self.width,
-                self.height,
-                crate::RotationMode::kRotate180,
-            );
             Ok(())
         }
     }
