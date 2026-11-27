@@ -38,7 +38,22 @@ elif [ "$1" == "windows" ]; then
         x86_64-w64-mingw32-dlltool -d "$extra/newdev.def" -l "$extra/lib/libNewdev.a" -k
     fi
     export SODIUM_LIB_DIR=$(pwd)/target/libsodium/build/lib
-    cargo rustc --locked --features flutter --lib --release --target=x86_64-pc-windows-gnu -- -L native=$(pwd)/$extra/lib
+    # Resolve Win8+ COM/WinRT entry points at run time under gnu so the DLL
+    # still loads on Windows 7. Idempotent; drops affected cross builds once.
+    ./patch-deps.sh
+    cargo rustc --locked --features flutter --lib --release --target=x86_64-pc-windows-gnu -- \
+        -L native=$(pwd)/$extra/lib \
+        -C link-arg=-static
+
+    # CI links the MSVC CRT statically; report any import that Windows 7 still
+    # lacks so a stale build is not mistaken for a Win7-capable one.
+    dll=target/x86_64-pc-windows-gnu/release/librustdesk.dll
+    imports=$(x86_64-w64-mingw32-objdump -p "$dll")
+    for sym in CoIncrementMTAUsage RoGetActivationFactory RoOriginateErrorW; do
+        if echo "$imports" | grep -q " $sym$"; then
+            echo "warning: $dll imports $sym, which Windows 7 does not provide" >&2
+        fi
+    done
 elif [ "$1" == "aarch64" ]; then
     export PKG_CONFIG_SYSROOT_DIR=$HOME/Documents/sysroot
     cargo build --locked --lib --features hwcodec,flutter,unix-file-copy-paste --release --target=aarch64-unknown-linux-gnu
